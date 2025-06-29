@@ -1,0 +1,15 @@
+{"level":"info","message":"Server running on port 8000","service":"team-messenger-backend","timestamp":"2025-06-29T13:38:59.826Z"}
+{"level":"info","message":"Environment: development","service":"team-messenger-backend","timestamp":"2025-06-29T13:38:59.830Z"}
+{"level":"info","message":"Frontend URL: http://localhost:3000","service":"team-messenger-backend","timestamp":"2025-06-29T13:38:59.830Z"}
+{"level":"info","message":"Database connected successfully","service":"team-messenger-backend","timestamp":"2025-06-29T13:38:59.831Z"}
+{"level":"info","message":"Server running on port 8000","service":"team-messenger-backend","timestamp":"2025-06-29T14:16:43.679Z"}
+{"level":"info","message":"Environment: development","service":"team-messenger-backend","timestamp":"2025-06-29T14:16:43.681Z"}
+{"level":"info","message":"Frontend URL: http://localhost:3000","service":"team-messenger-backend","timestamp":"2025-06-29T14:16:43.682Z"}
+{"level":"info","message":"Database connected successfully","service":"team-messenger-backend","timestamp":"2025-06-29T14:16:43.683Z"}
+{"level":"info","message":"::1 - - [29/Jun/2025:14:19:04 +0000] \"POST /api/auth/login HTTP/1.1\" 401 31 \"-\" \"node\"","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:04.678Z"}
+{"level":"info","message":"User registered: ramasamy.vignesh","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:05.007Z"}
+{"level":"info","message":"::1 - - [29/Jun/2025:14:19:05 +0000] \"POST /api/auth/register HTTP/1.1\" 201 497 \"-\" \"node\"","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:05.008Z"}
+{"level":"info","message":"::1 - - [29/Jun/2025:14:19:34 +0000] \"GET /health HTTP/1.1\" 200 184 \"-\" \"curl/8.7.1\"","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:34.074Z"}
+{"level":"info","message":"User registered: testuser","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:57.967Z"}
+{"level":"info","message":"::1 - - [29/Jun/2025:14:19:57 +0000] \"POST /api/auth/register HTTP/1.1\" 201 439 \"-\" \"curl/8.7.1\"","service":"team-messenger-backend","timestamp":"2025-06-29T14:19:57.968Z"}
+{"level":"info","message":"SIGINT received, shutting down gracefully","service":"team-messenger-backend","timestamp":"2025-06-29T14:21:25.629Z"}

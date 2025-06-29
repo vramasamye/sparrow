@@ -1,0 +1,122 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  name      String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  ownedWorkspaces Workspace[] @relation("WorkspaceOwner")
+  members         Member[]
+  channelMembers  ChannelMember[]
+  messages        Message[]    @relation("MessageAuthor")
+  sentMessages    Message[]    @relation("MessageSender")
+  receivedMessages Message[]   @relation("MessageRecipient")
+
+  @@map("users")
+}
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  owner    User      @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  Member[]
+  channels Channel[]
+  messages Message[]
+
+  @@map("workspaces")
+}
+
+model Member {
+  id          String     @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        MemberRole @default(MEMBER)
+  joinedAt    DateTime   @default(now())
+
+  // Relationships
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@map("members")
+}
+
+model Channel {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  isPrivate   Boolean  @default(false)
+  workspaceId String
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members   ChannelMember[]
+  messages  Message[]
+
+  @@unique([name, workspaceId])
+  @@map("channels")
+}
+
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  // Relationships
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@map("channel_members")
+}
+
+model Message {
+  id          String    @id @default(cuid())
+  content     String
+  userId      String
+  channelId   String?
+  workspaceId String?
+  recipientId String?   // For direct messages
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relationships
+  user      User       @relation("MessageAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel?   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sender    User?      @relation("MessageSender", fields: [userId], references: [id], onDelete: Cascade)
+  recipient User?      @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
