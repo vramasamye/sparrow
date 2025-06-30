@@ -219,5 +219,29 @@ export function useSocket() {
       return () => socket.off && socket.off('new_notification', callback);
     }, [socket]),
 
+    // DM Typing Indicators
+    startDmTyping: useCallback((recipientId: string) => {
+      if (socket && isConnected && socket.emit) {
+        socket.emit('dm_start_typing', { recipientId });
+      }
+    }, [socket, isConnected]),
+
+    stopDmTyping: useCallback((recipientId: string) => {
+      if (socket && isConnected && socket.emit) {
+        socket.emit('dm_stop_typing', { recipientId });
+      }
+    }, [socket, isConnected]),
+
+    onDmUserTyping: useCallback((callback: (data: { senderId: string; senderUsername: string }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('dm_user_typing', callback);
+      return () => socket.off && socket.off('dm_user_typing', callback);
+    }, [socket]),
+
+    onDmUserStopTyping: useCallback((callback: (data: { senderId: string }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('dm_user_stop_typing', callback);
+      return () => socket.off && socket.off('dm_user_stop_typing', callback);
+    }, [socket]),
   }
 }

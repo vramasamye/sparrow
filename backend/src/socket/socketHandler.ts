@@ -408,10 +408,11 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
       }
     })
 
-    // Handle typing indicators
+    // Handle typing indicators for Channels
     socket.on('start_typing', async (data: { channelId: string }) => {
       try {
         const { channelId } = data
+        const currentUser = socket.data.user;
         
         // Verify user is member of channel
         const membership = await db.channelMember.findFirst({
@@ -440,12 +441,13 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     socket.on('stop_typing', async (data: { channelId: string }) => {
       try {
         const { channelId } = data
+        const currentUser = socket.data.user;
         
         // Verify user is member of channel
         const membership = await db.channelMember.findFirst({
           where: {
             channelId,
-            userId: socket.data.user.id
+            userId: currentUser.id
           }
         })
 
@@ -454,13 +456,39 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
         }
 
         socket.to(`channel:${channelId}`).emit('user_stop_typing', {
-          userId: socket.data.user.id,
+          userId: currentUser.id,
           channelId
         })
       } catch (error) {
         logger.error('Stop typing error:', error)
       }
     })
+
+    // Handle DM Typing Indicators
+    socket.on('dm_start_typing', (data: { recipientId: string }) => {
+      const { recipientId } = data;
+      const sender = socket.data.user;
+      const recipientSocketId = userSocketsMap?.get(recipientId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('dm_user_typing', {
+          senderId: sender.id,
+          senderUsername: sender.username,
+        });
+      }
+    });
+
+    socket.on('dm_stop_typing', (data: { recipientId: string }) => {
+      const { recipientId } = data;
+      const sender = socket.data.user;
+      const recipientSocketId = userSocketsMap?.get(recipientId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('dm_user_stop_typing', {
+          senderId: sender.id,
+        });
+      }
+    });
 
     // Handle disconnect
     socket.on('disconnect', () => {

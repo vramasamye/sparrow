@@ -16,22 +16,28 @@ interface WorkspaceMember {
 interface MessageComposerProps {
   onSendMessage: (content: string) => void
   placeholder?: string
-  channelId?: string
+  channelId?: string // For channel-based typing indicators
   workspaceMembers?: WorkspaceMember[]
+  // Generic typing handlers for DM or other contexts
+  onStartTyping?: () => void
+  onStopTyping?: () => void
 }
 
 export function MessageComposer({
   onSendMessage,
   placeholder = "Type a message...",
   channelId,
-  workspaceMembers = []
+  workspaceMembers = [],
+  onStartTyping,
+  onStopTyping
 }: MessageComposerProps) {
   const [message, setMessage] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
+  const [isTyping, setIsTyping] = useState(false) // Local state to manage timeout
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const { data: session } = useSession()
-  const { startTyping, stopTyping } = useSocket()
+  // Socket methods for channel typing are still here, but will only be called if channelId is present
+  const { startTyping: startChannelTyping, stopTyping: stopChannelTyping } = useSocket()
 
   // For @mention suggestions
   const [mentionQuery, setMentionQuery] = useState('')
@@ -106,9 +112,13 @@ export function MessageComposer({
 
 
   const handleTyping = () => {
-    if (!isTyping && channelId && session?.user) {
+    if (!isTyping && session?.user) {
       setIsTyping(true)
-      startTyping(channelId, session.user.id, session.user.username || session.user.name || 'User')
+      if (onStartTyping) {
+        onStartTyping()
+      } else if (channelId) { // Fallback to channel typing if no specific handler
+        startChannelTyping(channelId) // Note: startChannelTyping might need more params if you updated its signature
+      }
     }
 
     // Clear existing timeout
@@ -123,9 +133,13 @@ export function MessageComposer({
   }
 
   const handleStopTyping = () => {
-    if (isTyping && channelId && session?.user) {
+    if (isTyping && session?.user) {
       setIsTyping(false)
-      stopTyping(channelId, session.user.id)
+      if (onStopTyping) {
+        onStopTyping()
+      } else if (channelId) { // Fallback to channel typing
+        stopChannelTyping(channelId) // Note: stopChannelTyping might need more params if you updated its signature
+      }
     }
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current)

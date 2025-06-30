@@ -40,7 +40,8 @@ export function ChatInterface({
   const [currentDM, setCurrentDM] = useState(null)
   const [showUserSearch, setShowUserSearch] = useState(false)
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0) // To pass to Bell & Panel
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
+  const [unreadDmSenders, setUnreadDmSenders] = useState<Set<string>>(new Set()); // Track senders of unread DMs
   const {
     joinWorkspace,
     isConnected,
@@ -74,6 +75,14 @@ export function ChatInterface({
 
     const cleanup = onNewNotification((notification: Notification) => {
       setUnreadNotificationCount(prev => prev + 1);
+
+      if (notification.type === 'new_dm' && notification.sender?.id) {
+        // Only add if the DM is not currently open with that sender
+        if (currentDM?.id !== notification.sender.id) {
+          setUnreadDmSenders(prev => new Set(prev).add(notification.sender.id));
+        }
+      }
+
       // Optionally, trigger a browser notification
       if (Notification.permission === "granted") {
         new window.Notification(`New notification from ${notification.sender.name || notification.sender.username}`, {
@@ -89,7 +98,7 @@ export function ChatInterface({
       }
     });
     return cleanup;
-  }, [onNewNotification]);
+  }, [onNewNotification, currentDM?.id]); // Added currentDM.id to dependencies
 
   // Listen for channel join/leave events
   useEffect(() => {
@@ -203,9 +212,41 @@ export function ChatInterface({
     }
   }, [workspace?.id, isConnected, joinWorkspace])
 
-  const handleDirectMessage = (user: any) => {
+  const handleDirectMessage = async (user: any) => {
     setCurrentChannel(null)
     setCurrentDM(user)
+
+    // Clear unread DM sender indicator for this user
+    setUnreadDmSenders(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(user.id);
+      return newSet;
+    });
+
+    // Mark actual 'new_dm' notifications from this user as read on the backend
+    if (session) {
+      try {
+        // First, fetch unread 'new_dm' notifications from this specific sender
+        const response = await fetch(`/api/notifications?status=unread&type=new_dm&senderId=${user.id}`, {
+            headers: { 'Authorization': `Bearer ${session.accessToken}` }
+        });
+        if (response.ok) {
+            const { notifications: dmNotificationsToRead } = await response.json();
+            for (const notif of dmNotificationsToRead) {
+                if (notif.sender.id === user.id) { // Double check sender
+                    await fetch(`/api/notifications/${notif.id}/read`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${session.accessToken}` }
+                    });
+                    // Decrement global unread count as these are marked read
+                    setUnreadNotificationCount(prev => Math.max(0, prev - 1));
+                }
+            }
+        }
+      } catch (error) {
+        console.error("Failed to mark DM notifications as read:", error);
+      }
+    }
   }
 
   const handleChannelSelect = (channel: any) => {
@@ -262,6 +303,8 @@ export function ChatInterface({
 +        <Sidebar
           workspace={workspace}
           currentChannel={currentChannel}
+          currentDM={currentDM} // Pass currentDM
+          unreadDmSenders={unreadDmSenders} // Pass unreadDmSenders
           onChannelSelect={handleChannelSelect}
           onChannelCreated={(channel) => {
             // Refresh workspace data or add channel to state
@@ -305,8 +348,7 @@ export function ChatInterface({
         ) : currentDM ? (
           <DirectMessageArea 
             otherUser={currentDM} 
-            // If DMs also need @mentions within the same workspace context, pass members here too.
-            // workspaceMembers={workspace?.members || []}
+            workspaceMembers={workspace?.members || []} // Pass workspaceMembers for @mention styling
             onClose={() => setCurrentDM(null)}
           />
         ) : (

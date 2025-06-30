@@ -11,13 +11,28 @@ const router = Router()
 router.get('/', async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user!.id
-    const { limit = 20, offset = 0, status = 'unread' } = req.query;
+    const { limit = 20, offset = 0, status = 'unread', type, senderId } = req.query;
+
+    const whereClause: any = {
+      userId,
+    };
+
+    if (status === 'unread') {
+      whereClause.isRead = false;
+    } else if (status === 'read') {
+      whereClause.isRead = true;
+    }
+    // If status is 'all' or undefined, no isRead filter is applied.
+
+    if (type) {
+      whereClause.type = type as string;
+    }
+    if (senderId) {
+      whereClause.senderId = senderId as string;
+    }
 
     const notifications = await db.notification.findMany({
-      where: {
-        userId,
-        ...(status === 'unread' && { isRead: false }),
-      },
+      where: whereClause,
       include: {
         sender: { select: { id: true, username: true, name: true, avatar: true } },
         message: {

@@ -13,16 +13,29 @@ interface DirectMessageAreaProps {
     name?: string
     avatar?: string
   }
+  workspaceMembers?: any[] // Re-using WorkspaceMember type from MessageComposer context
   onClose: () => void
 }
 
-export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps) {
+export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }: DirectMessageAreaProps) {
   const { data: session } = useSession()
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
-  const [dmChannel, setDmChannel] = useState<any>(null)
+  // const [dmChannel, setDmChannel] = useState<any>(null) // Removed: DMs are not channels
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { sendDirectMessage, onNewDirectMessage, joinChannel, isConnected } = useSocket()
+  const {
+    sendDirectMessage,
+    onNewDirectMessage,
+    isConnected,
+    onMessageUpdated, // For message edits
+    onMessageDeleted,  // For message deletes
+    startDmTyping,    // DM Typing
+    stopDmTyping,     // DM Typing
+    onDmUserTyping,   // DM Typing
+    onDmUserStopTyping// DM Typing
+  } = useSocket()
+
+  const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
 
   useEffect(() => {
     loadDirectMessages()
@@ -32,18 +45,70 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
     scrollToBottom()
   }, [messages])
 
-  useEffect(() => {
-    if (dmChannel?.id) {
-      joinChannel(dmChannel.id)
-    }
-  }, [dmChannel?.id, joinChannel])
+  // Removed useEffect for joining dmChannel
 
   useEffect(() => {
     const cleanup = onNewDirectMessage((newMessage) => {
-      setMessages(prev => [...prev, newMessage])
-    })
-    return cleanup
-  }, [onNewDirectMessage])
+      // Ensure this message is part of the current DM conversation
+      if (newMessage.userId === otherUser.id || newMessage.recipientId === otherUser.id) {
+         setMessages(prev => [...prev, newMessage])
+      }
+    });
+
+    // Handle message updates for DMs
+    const cleanupMessageUpdated = onMessageUpdated((updatedMessage) => {
+      // Check if the updated message belongs to this DM conversation
+      const isToCurrentUser = updatedMessage.recipientId === session?.user?.id && updatedMessage.userId === otherUser.id;
+      const isFromCurrentUser = updatedMessage.userId === session?.user?.id && updatedMessage.recipientId === otherUser.id;
+
+      if (isToCurrentUser || isFromCurrentUser) {
+        setMessages(prevMessages =>
+          prevMessages.map(msg => msg.id === updatedMessage.id ? { ...msg, ...updatedMessage, user: msg.user } : msg)
+        );
+      }
+    });
+
+    // Handle message deletions for DMs
+    const cleanupMessageDeleted = onMessageDeleted((deletedMessageData) => {
+       // Check if the deleted message belongs to this DM conversation
+      const isRelevantDM =
+        (deletedMessageData.userId === session?.user?.id && deletedMessageData.recipientId === otherUser.id) ||
+        (deletedMessageData.recipientId === session?.user?.id && deletedMessageData.userId === otherUser.id);
+
+      if (isRelevantDM) {
+        setMessages(prevMessages => prevMessages.filter(msg => msg.id !== deletedMessageData.id));
+      }
+    });
+
+    return () => {
+      cleanup();
+      cleanupMessageUpdated();
+      cleanupMessageDeleted();
+    }
+  }, [onNewDirectMessage, onMessageUpdated, onMessageDeleted, otherUser.id, session?.user?.id])
+
+  // DM Typing Indicator Effects
+  useEffect(() => {
+    if (!otherUser?.id || !session?.user?.id) return;
+
+    const typingCleanup = onDmUserTyping((data) => {
+      if (data.senderId === otherUser.id) {
+        setIsOtherUserTyping(true);
+      }
+    });
+
+    const stopTypingCleanup = onDmUserStopTyping((data) => {
+      if (data.senderId === otherUser.id) {
+        setIsOtherUserTyping(false);
+      }
+    });
+
+    return () => {
+      typingCleanup();
+      stopTypingCleanup();
+    };
+  }, [onDmUserTyping, onDmUserStopTyping, otherUser?.id, session?.user?.id]);
+
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -52,12 +117,26 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
   const loadDirectMessages = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`/api/direct-messages?userId=${otherUser.id}`)
+      // Corrected API endpoint for fetching messages
+      const token = localStorage.getItem('token'); // Assuming token is stored this way
+      const response = await fetch(`/api/messages?recipientId=${otherUser.id}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
       const data = await response.json()
       
-      if (data.channel && data.messages) {
-        setDmChannel(data.channel)
+      // DMs don't have a "channel" object in the same way channels do.
+      // The concept of dmChannel and joining a channel for DMs will be removed.
+      if (data.messages) {
+        // setDmChannel(null); // No separate DM channel object needed
         setMessages(data.messages)
+      } else if (response.status === 403) {
+        console.error("Unauthorized to fetch direct messages or no conversation yet.");
+        setMessages([]); // Set to empty if not authorized or no convo
+      } else {
+        console.error("Failed to parse messages or unexpected response structure:", data);
+        setMessages([]);
       }
     } catch (error) {
       console.error('Failed to load direct messages:', error)
@@ -67,11 +146,18 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
   }
 
   const handleSendMessage = async (content: string) => {
+    if (!session?.user?.id) {
+      console.error("User not authenticated to send message");
+      return;
+    }
     try {
-      const response = await fetch('/api/direct-messages', {
+      // Corrected API endpoint for sending messages
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/messages', { // Corrected endpoint
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           content,
@@ -82,15 +168,24 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
       const data = await response.json()
       
       if (data.message) {
-        setMessages(prev => [...prev, data.message])
+        // Optimistic update is tricky if we rely on socket for "self" message too.
+        // Backend `new_direct_message` sends to both sender and recipient.
+        // So, we can choose to rely on socket for adding the message to avoid duplication.
+        // For now, let's remove optimistic add from API response if socket is connected.
+        // If not connected, this optimistic add is useful.
+        if (!isConnected) {
+            setMessages(prev => [...prev, data.message]);
+        }
         
         // Send real-time message if connected
         if (isConnected) {
-          sendDirectMessage(otherUser.id, data.message)
+          sendDirectMessage(otherUser.id, content); // Corrected: pass content string
         }
+      } else {
+        console.error("Failed to send message, API response error:", data.error || response.statusText);
       }
     } catch (error) {
-      console.error('Failed to send direct message:', error)
+      console.error('Failed to send direct message:', error);
     }
   }
 
@@ -110,11 +205,16 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
             </button>
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm font-semibold">
-                    {otherUser.name?.[0]?.toUpperCase() || otherUser.username[0]?.toUpperCase()}
-                  </span>
-                </div>
+                {otherUser.avatar ? (
+                  <img src={otherUser.avatar} alt={otherUser.name || otherUser.username} className="w-8 h-8 rounded-full object-cover" />
+                ) : (
+                  <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
+                    <span className="text-white text-sm font-semibold">
+                      {otherUser.name?.[0]?.toUpperCase() || otherUser.username[0]?.toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                {/* TODO: Dynamic presence indicator */}
                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-white rounded-full"></div>
               </div>
               <div>
@@ -183,11 +283,21 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
         )}
       </div>
 
+      {/* Typing Indicator */}
+      {isOtherUserTyping && (
+        <div className="px-4 pt-1 pb-2 text-xs text-slate-500 italic">
+          {otherUser.name || otherUser.username} is typing...
+        </div>
+      )}
+
       {/* Message Composer */}
       <div className="bg-white border-t border-slate-200">
         <MessageComposer 
           onSendMessage={handleSendMessage}
           placeholder={`Message ${otherUser.name || otherUser.username}`}
+          onStartTyping={() => startDmTyping(otherUser.id)}
+          onStopTyping={() => stopDmTyping(otherUser.id)}
+          workspaceMembers={workspaceMembers}
         />
       </div>
     </div>
