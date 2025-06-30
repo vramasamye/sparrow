@@ -18,6 +18,7 @@ import workspaceRoutes from './routes/workspaces'
 import channelRoutes from './routes/channels'
 import messageRoutes from './routes/messages'
 import userRoutes from './routes/users'
+import notificationRoutes from './routes/notifications'
 
 dotenv.config()
 
@@ -73,6 +74,8 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage()
   })
 })
+app.set('io', io); // Make io instance available to routes
+app.set('userSockets', new Map<string, string>()); // Initialize userSockets map
 
 // API routes
 app.use('/api/auth', authRoutes)
@@ -80,9 +83,10 @@ app.use('/api/workspaces', authMiddleware, workspaceRoutes)
 app.use('/api/channels', authMiddleware, channelRoutes)
 app.use('/api/messages', authMiddleware, messageRoutes)
 app.use('/api/users', authMiddleware, userRoutes)
+app.use('/api/notifications', authMiddleware, notificationRoutes)
 
 // Socket.io handling
-socketHandler(io)
+socketHandler(io, app) // Pass app to socketHandler
 
 // Error handling
 app.use(errorHandler)

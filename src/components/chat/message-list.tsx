@@ -18,6 +18,25 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages }: MessageListProps) {
+  const renderMessageContent = (content: string) => {
+    if (!content) return null;
+    const mentionRegex = /(@[\w.-]+)/g; // Regex to find @username patterns
+    const parts = content.split(mentionRegex);
+
+    return parts.map((part, index) => {
+      if (mentionRegex.test(part)) {
+        // It's a mention
+        return (
+          <span key={index} className="bg-indigo-100 text-indigo-700 font-medium p-0.5 rounded-sm mx-px">
+            {part}
+          </span>
+        );
+      }
+      // It's a normal text part
+      return part;
+    });
+  };
+
   const formatTime = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleTimeString('en-US', { 
@@ -104,7 +123,7 @@ export function MessageList({ messages }: MessageListProps) {
                 </div>
                 
                 <div className="text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
-                  {message.content}
+                  {renderMessageContent(message.content)}
                 </div>
 
                 {message.replies && message.replies.length > 0 && (

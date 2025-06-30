@@ -21,12 +21,14 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relationships
-  ownedWorkspaces Workspace[] @relation("WorkspaceOwner")
-  members         Member[]
-  channelMembers  ChannelMember[]
-  messages        Message[]    @relation("MessageAuthor")
-  sentMessages    Message[]    @relation("MessageSender")
-  receivedMessages Message[]   @relation("MessageRecipient")
+  ownedWorkspaces        Workspace[]     @relation("WorkspaceOwner")
+  members                Member[]
+  channelMembers         ChannelMember[]
+  messages               Message[]       @relation("MessageAuthor")
+  sentMessages           Message[]       @relation("MessageSender")
+  receivedMessages       Message[]       @relation("MessageRecipient")
+  notifications          Notification[]  @relation("UserNotifications") // Notifications received by this user
+  triggeredNotifications Notification[]  @relation("UserTriggeredNotifications") // Notifications sent by this user
 
   @@map("users")
 }
@@ -74,9 +76,10 @@ model Channel {
   updatedAt   DateTime @updatedAt
 
   // Relationships
-  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  members   ChannelMember[]
-  messages  Message[]
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members       ChannelMember[]
+  messages      Message[]
+  notifications Notification[]  @relation("ChannelNotifications")
 
   @@unique([name, workspaceId])
   @@map("channels")
@@ -97,23 +100,45 @@ model ChannelMember {
 }
 
 model Message {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   content     String
   userId      String
   channelId   String?
   workspaceId String?
-  recipientId String?   // For direct messages
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  recipientId String? // For direct messages
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relationships
-  user      User       @relation("MessageAuthor", fields: [userId], references: [id], onDelete: Cascade)
-  channel   Channel?   @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sender    User?      @relation("MessageSender", fields: [userId], references: [id], onDelete: Cascade)
-  recipient User?      @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  user             User           @relation("MessageAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  channel          Channel?       @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  workspace        Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sender           User?          @relation("MessageSender", fields: [userId], references: [id], onDelete: Cascade)
+  recipient        User?          @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  mentionedUserIds String? // Comma-separated list of user IDs
+  notifications    Notification[] @relation("MessageNotifications")
 
   @@map("messages")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String // User who receives the notification
+  type      String // e.g., 'mention', 'new_dm'
+  messageId String? // Link to the message that triggered the notification
+  channelId String? // Link to the channel (if relevant)
+  senderId  String // User who triggered the notification
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relationships
+  user    User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  message Message? @relation("MessageNotifications", fields: [messageId], references: [id], onDelete: Cascade)
+  channel Channel? @relation("ChannelNotifications", fields: [channelId], references: [id], onDelete: Cascade)
+  sender  User     @relation("UserTriggeredNotifications", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
 }
 
 enum MemberRole {

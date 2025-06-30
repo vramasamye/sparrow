@@ -6,7 +6,21 @@ import { Sidebar } from './sidebar'
 import { MessageArea } from './message-area'
 import { DirectMessageArea } from './direct-message-area'
 import { UserSearch } from './user-search'
+import { NotificationBell } from '../notifications/notification-bell'
+import { NotificationPanel } from '../notifications/notification-panel'
 import { useSocket } from '@/hooks/useSocket'
+
+// Define Notification type structure - ideally import from a shared types file
+interface Notification {
+  id: string;
+  type: string;
+  sender: { id: string; username: string; name?: string; avatar?: string; };
+  message?: { id: string; content: string; channelId?: string; recipientId?: string; workspaceId?: string; };
+  channel?: { id: string; name: string; workspaceId?: string; };
+  isRead: boolean;
+  createdAt: string;
+}
+
 
 interface ChatInterfaceProps {
   workspace: any
@@ -25,7 +39,157 @@ export function ChatInterface({
   const [currentChannel, setCurrentChannel] = useState(null)
   const [currentDM, setCurrentDM] = useState(null)
   const [showUserSearch, setShowUserSearch] = useState(false)
-  const { joinWorkspace, isConnected } = useSocket()
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false)
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0) // To pass to Bell & Panel
+  const {
+    joinWorkspace,
+    isConnected,
+    onNewNotification,
+    onUserJoinedChannel, // New
+    onUserLeftChannel   // New
+  } = useSocket()
+
+  // Fetch initial notifications and unread count
+  const fetchInitialNotifications = async () => {
+    if (!session) return;
+    try {
+      const response = await fetch('/api/notifications?status=unread&limit=0'); // Get total unread
+      const data = await response.json();
+      if (data && typeof data.totalUnread === 'number') {
+        setUnreadNotificationCount(data.totalUnread);
+      }
+    } catch (error) {
+      console.error('Failed to fetch initial unread notification count:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchInitialNotifications();
+  }, [session]);
+
+
+  // Listen for new notifications from socket
+  useEffect(() => {
+    if (!onNewNotification) return;
+
+    const cleanup = onNewNotification((notification: Notification) => {
+      setUnreadNotificationCount(prev => prev + 1);
+      // Optionally, trigger a browser notification
+      if (Notification.permission === "granted") {
+        new window.Notification(`New notification from ${notification.sender.name || notification.sender.username}`, {
+          body: notification.message?.content.substring(0, 100) || `You have a new ${notification.type} notification.`,
+          icon: '/favicon.ico' // Replace with actual sender avatar if available
+        });
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            // Can show notification now
+          }
+        });
+      }
+    });
+    return cleanup;
+  }, [onNewNotification]);
+
+  // Listen for channel join/leave events
+  useEffect(() => {
+    if (!onUserJoinedChannel || !onUserLeftChannel || !workspace?.id || !session?.user?.id) return;
+
+    const joinedCleanup = onUserJoinedChannel((data: any) => {
+      if (data.workspaceId === workspace.id) {
+        // console.log('User joined channel in this workspace:', data);
+        // TODO: Update workspace data more gracefully.
+        // This could involve the parent `Dashboard` page refetching or `ChatInterface`
+        // managing its own copy of `workspace` if it's modified.
+        // For now, we can inform the user or try a less disruptive update if possible.
+        // A full refetch from onWorkspaceChange might be too broad if it resets other UI states.
+        // Consider if `workspace` prop itself needs to be updated via `onWorkspaceChange`
+        // or if a more specific callback like `onWorkspaceDataChange` is needed.
+        alert(`User ${data.username} joined channel ${data.channelName}. Workspace data may need refresh.`);
+        // Potentially, if the workspace object is managed by ChatInterface's parent (Dashboard),
+        // we might need a callback like `requestWorkspaceRefresh()`
+      }
+    });
+
+    const leftCleanup = onUserLeftChannel((data: any) => {
+      if (data.workspaceId === workspace.id) {
+        // console.log('User left channel in this workspace:', data);
+        // TODO: Update workspace data.
+        alert(`User ${data.username} left channel ${data.channelId}. Workspace data may need refresh.`);
+        if (data.userId === session.user.id && currentChannel?.id === data.channelId) {
+          // Current user left the currently viewed channel
+          if (workspace.channels && workspace.channels.length > 0) {
+            const generalChannel = workspace.channels.find((ch:any) => ch.name === 'general') ||
+                                   workspace.channels.find((ch:any) => !ch.isPrivate) || // find any public
+                                   workspace.channels[0]; // find any
+            if (generalChannel) {
+                handleChannelSelect(generalChannel);
+            } else {
+                 setCurrentChannel(null); // No other channels to select
+            }
+          } else {
+            setCurrentChannel(null);
+          }
+        }
+      }
+    });
+
+    return () => {
+      joinedCleanup();
+      leftCleanup();
+    };
+  }, [onUserJoinedChannel, onUserLeftChannel, workspace, session?.user?.id, currentChannel?.id, handleChannelSelect]); // Added handleChannelSelect to dependencies
+
+  const handleMarkNotificationAsRead = async (notificationId: string) => {
+    if (!session) return;
+    try {
+      const response = await fetch(`/api/notifications/${notificationId}/read`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.accessToken}` } // Assuming token is on session.accessToken
+      });
+      if (!response.ok) throw new Error('Failed to mark notification as read');
+      // Optimistic update handled by NotificationPanel, or could refetch here
+      // setUnreadNotificationCount(prev => Math.max(0, prev - 1)); // Panel also does this
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      // Revert optimistic update if needed
+    }
+  };
+
+  const handleMarkAllNotificationsAsRead = async () => {
+    if (!session) return;
+    try {
+      const response = await fetch('/api/notifications/read-all', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.accessToken}` }
+      });
+      if (!response.ok) throw new Error('Failed to mark all notifications as read');
+      setUnreadNotificationCount(0);
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
+  };
+
+  const handleNotificationClick = (notification: Notification) => {
+    // Basic navigation logic, can be expanded
+    // console.log("Notification clicked:", notification);
+    if (notification.channelId && workspace?.id) {
+        const targetChannel = workspace.channels.find((c:any) => c.id === notification.channelId);
+        if (targetChannel) {
+            handleChannelSelect(targetChannel);
+        }
+    } else if (notification.recipientId && notification.sender) { // For DMs
+        // This assumes recipientId on the message is the current user for a received DM notification
+        // And sender is the "otherUser" for the DM context.
+        // Need to ensure `workspace.members` contains all users or have a way to fetch user by ID.
+        const dmUser = workspace.members.find((m:any) => m.user.id === notification.sender.id)?.user;
+        if (dmUser) {
+            handleDirectMessage(dmUser);
+        }
+    }
+    setShowNotificationPanel(false); // Close panel after click
+  };
+
 
   useEffect(() => {
     if (workspace?.channels?.length > 0 && !currentChannel && !currentDM) {
@@ -77,20 +241,25 @@ export function ChatInterface({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </button>
-              <button
-                onClick={() => signOut()}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-                title="Sign out"
-              >
-                <svg className="w-5 h-5 text-slate-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <Sidebar
+              <NotificationBell
+                onClick={() => setShowNotificationPanel(prev => !prev)}
++                initialUnreadCount={unreadNotificationCount}
++                setUnreadCount={setUnreadNotificationCount}
++              />
++              <button
++                onClick={() => signOut()}
++                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
++                title="Sign out"
++              >
++                <svg className="w-5 h-5 text-slate-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
++                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
++                </svg>
++              </button>
++            </div>
++          </div>
++        </div>
++
++        <Sidebar
           workspace={workspace}
           currentChannel={currentChannel}
           onChannelSelect={handleChannelSelect}
@@ -132,10 +301,12 @@ export function ChatInterface({
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white">
         {currentChannel ? (
-          <MessageArea channel={currentChannel} />
+          <MessageArea channel={currentChannel} workspaceMembers={workspace?.members || []} />
         ) : currentDM ? (
           <DirectMessageArea 
             otherUser={currentDM} 
+            // If DMs also need @mentions within the same workspace context, pass members here too.
+            // workspaceMembers={workspace?.members || []}
             onClose={() => setCurrentDM(null)}
           />
         ) : (
@@ -166,6 +337,16 @@ export function ChatInterface({
           onUserSelect={handleDirectMessage}
         />
       )}
+
+      <NotificationPanel
+        isOpen={showNotificationPanel}
+        onClose={() => setShowNotificationPanel(false)}
+        onNotificationClick={handleNotificationClick}
+        onMarkAsRead={handleMarkNotificationAsRead}
+        onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+        setUnreadCount={setUnreadNotificationCount} // Pass down to keep count in sync
+        // Pass session or token if NotificationPanel makes its own API calls
+      />
     </div>
   )
 }

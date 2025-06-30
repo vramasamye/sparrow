@@ -15,7 +15,7 @@ export function useSocket() {
     if (!session?.user) return
     if (typeof window === 'undefined') return
 
-    console.log('Attempting to connect socket...', { user: session.user })
+    // console.log('Attempting to connect socket...', { user: session.user })
 
     let socketInstance: any = null
 
@@ -36,7 +36,7 @@ export function useSocket() {
           id: session.user.id
         }
 
-        console.log('Connecting with user data:', userData, 'Token:', realToken?.substring(0, 20))
+        // console.log('Connecting with user data:', userData, 'Token:', realToken?.substring(0, 20))
 
         socketInstance = io(BACKEND_URL, {
           auth: {
@@ -49,27 +49,27 @@ export function useSocket() {
         })
 
         socketInstance.on('connect', () => {
-          console.log('Socket connected successfully')
+          // console.log('Socket connected successfully')
           setIsConnected(true)
         })
 
         socketInstance.on('disconnect', (reason: any) => {
-          console.log('Socket disconnected:', reason)
+          // console.log('Socket disconnected:', reason)
           setIsConnected(false)
         })
 
         socketInstance.on('connect_error', (error: any) => {
-          console.error('Socket connection error:', error)
+          console.error('Socket connection error:', error) // Keep important errors
           setIsConnected(false)
         })
 
         socketInstance.on('error', (error: any) => {
-          console.error('Socket error:', error)
+          console.error('Socket error:', error) // Keep important errors
         })
 
         setSocket(socketInstance)
       } catch (error) {
-        console.error('Failed to initialize socket:', error)
+        console.error('Failed to initialize socket:', error) // Keep important errors
       }
     }
 
@@ -77,7 +77,7 @@ export function useSocket() {
 
     return () => {
       if (socketInstance && socketInstance.disconnect) {
-        console.log('Cleaning up socket connection')
+        // console.log('Cleaning up socket connection')
         socketInstance.disconnect()
       }
     }
@@ -85,27 +85,27 @@ export function useSocket() {
 
   const joinWorkspace = useCallback((workspaceId: string) => {
     if (socket && isConnected && socket.emit) {
-      console.log('Joining workspace:', workspaceId)
+      // console.log('Joining workspace:', workspaceId)
       socket.emit('join_workspace', workspaceId)
     }
   }, [socket, isConnected])
 
   const joinChannel = useCallback((channelId: string) => {
     if (socket && isConnected && socket.emit) {
-      console.log('Joining channel:', channelId)
+      // console.log('Joining channel:', channelId)
       socket.emit('join_channel', channelId)
     }
   }, [socket, isConnected])
 
-  const leaveChannel = useCallback((channelId: string) => {
+  const leaveChannel = useCallback((channelId: string, workspaceId: string) => {
     if (socket && isConnected && socket.emit) {
-      socket.emit('leave_channel', channelId)
+      socket.emit('leave_channel', { channelId, workspaceId })
     }
   }, [socket, isConnected])
 
   const sendMessage = useCallback((channelId: string, content: string) => {
     if (socket && isConnected && socket.emit) {
-      console.log('Sending message via socket:', { channelId, content })
+      // console.log('Sending message via socket:', { channelId, content })
       socket.emit('send_message', { channelId, content })
     }
   }, [socket, isConnected])
@@ -185,5 +185,39 @@ export function useSocket() {
     onUserTyping,
     onUserStopTyping,
     onUserStatusChange,
+
+    // For message updates/deletes
+    onMessageUpdated: useCallback((callback: (message: any) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('message_updated', callback);
+      return () => socket.off && socket.off('message_updated', callback);
+    }, [socket]),
+
+    onMessageDeleted: useCallback((callback: (data: { id: string; channelId?: string; recipientId?: string; userId?: string; }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('message_deleted', callback);
+      return () => socket.off && socket.off('message_deleted', callback);
+    }, [socket]),
+
+    // For channel join/leave
+    onUserJoinedChannel: useCallback((callback: (data: any) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('user_joined_channel', callback);
+      return () => socket.off && socket.off('user_joined_channel', callback);
+    }, [socket]),
+
+    onUserLeftChannel: useCallback((callback: (data: any) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('user_left_channel', callback);
+      return () => socket.off && socket.off('user_left_channel', callback);
+    }, [socket]),
+
+    // For notifications (already added in previous step, ensure it's here)
+    onNewNotification: useCallback((callback: (notification: any) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('new_notification', callback);
+      return () => socket.off && socket.off('new_notification', callback);
+    }, [socket]),
+
   }
 }

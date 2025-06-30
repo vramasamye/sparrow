@@ -6,16 +6,34 @@ import { MessageComposer } from './message-composer'
 import { TypingIndicator } from './typing-indicator'
 import { useSocket } from '@/hooks/useSocket'
 
+interface WorkspaceMember { // Define this type here or import from a shared types file
+  user: {
+    id: string
+    username: string
+    name?: string
+  }
+}
 interface MessageAreaProps {
   channel: any
+  workspaceMembers?: WorkspaceMember[]
 }
 
-export function MessageArea({ channel }: MessageAreaProps) {
+export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { joinChannel, leaveChannel, sendMessage, onNewMessage, onUserTyping, onUserStopTyping, isConnected } = useSocket()
+  const {
+    joinChannel,
+    leaveChannel,
+    sendMessage,
+    onNewMessage,
+    onUserTyping,
+    onUserStopTyping,
+    isConnected,
+    onMessageUpdated, // New
+    onMessageDeleted  // New
+  } = useSocket()
 
   useEffect(() => {
     if (channel?.id) {
@@ -24,11 +42,15 @@ export function MessageArea({ channel }: MessageAreaProps) {
     }
     
     return () => {
-      if (channel?.id) {
-        leaveChannel(channel.id)
+      if (channel?.id && channel.workspaceId) { // Ensure workspaceId is available for leaveChannel
+        leaveChannel(channel.id, channel.workspaceId)
+      } else if (channel?.id) {
+        // Fallback or error if workspaceId isn't available - ideally channel object always has it
+        console.warn("Attempted to leave channel without workspaceId:", channel)
+        // leaveChannel(channel.id, GET_WORKSPACE_ID_SOMEHOW)
       }
     }
-  }, [channel?.id, joinChannel, leaveChannel])
+  }, [channel?.id, channel?.workspaceId, joinChannel, leaveChannel])
 
   useEffect(() => {
     scrollToBottom()
@@ -49,15 +71,38 @@ export function MessageArea({ channel }: MessageAreaProps) {
     })
     
     const cleanupStopTyping = onUserStopTyping((data) => {
-      setTypingUsers(prev => prev.filter(username => username !== data.userId))
+      if (data.channelId === channel?.id) {
+        setTypingUsers(prev => prev.filter(username => username !== data.userId))
+      }
     })
+
+    // Handle message updates
+    const cleanupMessageUpdated = onMessageUpdated((updatedMessage) => {
+      if (updatedMessage.channelId === channel?.id) {
+        setMessages(prevMessages =>
+          prevMessages.map(msg => msg.id === updatedMessage.id ? { ...msg, ...updatedMessage, user: msg.user } : msg)
+          // Note: backend sends full message, including user. If user object on updatedMessage is partial, merge carefully.
+          // Assuming updatedMessage user is complete or we only update content & updatedAt.
+          // For safety, if only content changes: { ...msg, content: updatedMessage.content, updatedAt: updatedMessage.updatedAt }
+        );
+      }
+    });
+
+    // Handle message deletions
+    const cleanupMessageDeleted = onMessageDeleted((deletedMessageData) => {
+      if (deletedMessageData.channelId === channel?.id) {
+        setMessages(prevMessages => prevMessages.filter(msg => msg.id !== deletedMessageData.id));
+      }
+    });
     
     return () => {
       cleanupMessage()
       cleanupTyping()
       cleanupStopTyping()
+      cleanupMessageUpdated()
+      cleanupMessageDeleted()
     }
-  }, [onNewMessage, onUserTyping, onUserStopTyping])
+  }, [channel?.id, onNewMessage, onUserTyping, onUserStopTyping, onMessageUpdated, onMessageDeleted])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -185,6 +230,7 @@ export function MessageArea({ channel }: MessageAreaProps) {
           onSendMessage={handleSendMessage}
           placeholder={`Message #${channel.name}`}
           channelId={channel.id}
+          workspaceMembers={workspaceMembers}
         />
       </div>
     </div>
