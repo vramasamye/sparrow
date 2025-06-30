@@ -176,10 +176,14 @@ export function MessageComposer({
   }, [message])
 
   return (
-    <div className="bg-white p-4">
-      <form onSubmit={handleSubmit} className="flex gap-3">
+    // Reduced padding, added dark mode bg for composer area
+    <div className="bg-white dark:bg-slate-800 p-3 border-t border-slate-200 dark:border-slate-700">
+      {/* Use items-end for vertical alignment with a potentially multi-line textarea */}
+      <form onSubmit={handleSubmit} className="flex items-end gap-2">
         <div className="flex-1 relative">
-          <div className="border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
+          {/* Main input and formatting toolbar container */}
+          {/* Dark mode borders and focus ring */}
+          <div className="border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 dark:focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
             <textarea
               ref={textareaRef}
               value={message}
@@ -191,13 +195,14 @@ export function MessageComposer({
                 setTimeout(() => setShowSuggestions(false), 100)
               }}
               placeholder={placeholder}
-              className="w-full resize-none px-4 py-3 focus:outline-none max-h-32 min-h-[52px] placeholder-slate-400"
+              // Adjusted padding, min-height, dark mode styles
+              className="w-full resize-none px-3 py-2.5 focus:outline-none max-h-36 min-h-[44px] placeholder-slate-400 dark:placeholder-slate-500 bg-transparent dark:text-slate-100"
               rows={1}
             />
 
             {showSuggestions && filteredMembers.length > 0 && (
               <div
-                className="absolute z-10 w-full max-w-xs bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
+                className="absolute z-10 w-full max-w-xs bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-xl overflow-hidden" // Dark mode for suggestions
                 style={{
                   bottom: '100%', // Position above the input area
                   left: 0, // Align with left of input area, adjust as needed
@@ -225,12 +230,12 @@ export function MessageComposer({
               </div>
             )}
             
-            {/* Formatting Toolbar */}
-            <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-200">
-              <div className="flex gap-1">
+            {/* Formatting Toolbar - dark mode styles, reduced padding */}
+            <div className="flex items-center justify-between px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border-t border-slate-200 dark:border-slate-600">
+              <div className="flex gap-0.5"> {/* Reduced gap */}
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Bold"
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -239,7 +244,7 @@ export function MessageComposer({
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Italic"
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -248,7 +253,7 @@ export function MessageComposer({
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Attach file"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -257,7 +262,7 @@ export function MessageComposer({
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Emoji"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,22 +271,23 @@ export function MessageComposer({
                 </button>
               </div>
               
-              <div className="text-xs text-slate-500">
-                <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Enter</kbd> to send, <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Shift</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Enter</kbd> for new line
-              </div>
+              {/* Keyboard shortcut hint - can be removed for very compact UI */}
+              {/* <div className="text-xs text-slate-500 dark:text-slate-400">
+                <kbd className="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-600 rounded text-xs">Enter</kbd> to send
+              </div> */}
             </div>
           </div>
         </div>
         
+        {/* Send Button - changed to icon button, adjusted size and alignment */}
         <button
           type="submit"
           disabled={!message.trim()}
-          className="px-6 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium self-end flex items-center gap-2"
+          className="p-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:bg-indigo-400 dark:disabled:bg-indigo-700 dark:disabled:opacity-60 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+          style={{ height: '44px', width: '44px' }} // Match min-h of textarea
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-          Send
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+          <span className="sr-only">Send</span>
         </button>
       </form>
     </div>

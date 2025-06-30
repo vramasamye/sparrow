@@ -86,17 +86,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
   return (
     <div className="flex-1 overflow-y-auto bg-slate-800">
       {/* Channels Section */}
-      <div className="p-4 border-b border-slate-700">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="p-3 border-b border-slate-700"> {/* Reduced p-4 to p-3 */}
+        <div className="flex items-center justify-between mb-2"> {/* Reduced mb-4 to mb-2 */}
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"> {/* Smaller text, lighter color, wider tracking, smaller gap */}
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"> {/* Slightly smaller icon */}
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
             </svg>
             Channels
           </h3>
           <button 
             onClick={() => setShowCreateChannel(true)}
-            className="text-slate-400 hover:text-white hover:bg-slate-700 p-1 rounded transition-colors"
+            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
             title="Create channel"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -110,28 +110,29 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             <button
               key={channel.id}
               onClick={() => onChannelSelect(channel)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 group ${
+              className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors group ${ // py-1.5 for density, rounded-md
                 currentChannel?.id === channel.id
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  ? 'bg-slate-600 text-white font-semibold' // Updated selected style
+                  : 'text-slate-200 hover:bg-slate-700 hover:text-white' // Updated base and hover
               }`}
             >
               <div className="flex items-center gap-2">
-                <span className={`${currentChannel?.id === channel.id ? 'text-indigo-200' : 'text-slate-400 group-hover:text-slate-300'}`}>
+                <span className={`${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500 group-hover:text-slate-400'}`}>
                   #
                 </span>
-                <span className="truncate font-medium">{channel.name}</span>
+                <span className={`truncate ${currentChannel?.id === channel.id ? 'font-semibold' : 'font-medium'}`}>{channel.name}</span>
                 {channel.isPrivate && (
-                  <svg className={`w-3 h-3 ${currentChannel?.id === channel.id ? 'text-indigo-200' : 'text-slate-400'}`} fill="currentColor" viewBox="0 0 20 20">
+                  <svg className={`w-3 h-3 flex-shrink-0 ${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500'}`} fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                   </svg>
                 )}
               </div>
-              {channel.description && (
-                <p className={`text-xs mt-1 truncate ${currentChannel?.id === channel.id ? 'text-indigo-200' : 'text-slate-400'}`}>
+              {/* Description can be removed for density, or kept if important */}
+              {/* {channel.description && (
+                <p className={`text-xs mt-0.5 truncate ${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-400'}`}>
                   {channel.description}
                 </p>
-              )}
+              )} */}
             </button>
           ))}
           
@@ -150,50 +151,53 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
       </div>
 
       {/* Direct Messages (Recent Conversations) Section */}
-      <div className="p-4 border-b border-slate-700">
+      <div className="p-3 border-b border-slate-700"> {/* Reduced p-4 to p-3 */}
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"> {/* Matched style */}
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> {/* Matched style */}
             Direct Messages
           </h3>
           {/* Maybe a '+' button here later to start a new DM via search */}
         </div>
         {loadingDMs ? (
-          <div className="text-slate-400 text-xs py-2">Loading DMs...</div>
+          <div className="text-slate-400 text-xs py-2 px-3">Loading DMs...</div> {/* Added px-3 for alignment */}
         ) : dmConversations.length > 0 ? (
           <div className="space-y-1">
             {dmConversations.map((convo) => (
               <button
                 key={convo.user.id}
                 onClick={() => onDirectMessage(convo.user)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors group ${
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors group ${ // gap-2.5
                   currentDM?.id === convo.user.id
-                    ? 'bg-slate-700 text-white' // Selected DM style
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-                } ${unreadDmSenders.has(convo.user.id) ? 'font-bold' : ''}`}
+                    ? 'bg-slate-600 text-white font-semibold' // Updated selected DM style
+                    : unreadDmSenders.has(convo.user.id)
+                      ? 'text-white font-semibold hover:bg-slate-700' // Unread style
+                      : 'text-slate-300 hover:bg-slate-700 hover:text-slate-100' // Default
+                }`}
               >
-                <div className="relative">
-                  <div className="w-8 h-8 bg-gradient-to-br from-sky-500 to-cyan-600 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs font-semibold">
+                <div className="relative flex-shrink-0">
+                  {/* Basic avatar placeholder, replace with actual image if available */}
+                  <div className="w-6 h-6 bg-gradient-to-br from-sky-500 to-cyan-600 rounded-full flex items-center justify-center">
+                    <span className="text-white text-[10px] font-semibold">
                       {convo.user.name?.[0]?.toUpperCase() || convo.user.username[0]?.toUpperCase()}
                     </span>
                   </div>
-                  {/* TODO: Add online status indicator here based on actual presence */}
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-slate-800 rounded-full"></div>
+                  {/* TODO: Add dynamic online status indicator */}
+                  <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <p className={`truncate group-hover:text-white ${currentDM?.id === convo.user.id || unreadDmSenders.has(convo.user.id) ? 'text-white' : 'text-slate-300' }`}>
+                  <p className={`truncate ${ currentDM?.id === convo.user.id || unreadDmSenders.has(convo.user.id) ? 'text-white' : 'text-slate-200' } group-hover:text-white`}>
                     {convo.user.name || convo.user.username}
                   </p>
                   {convo.lastMessage && (
-                    <p className={`text-xs truncate group-hover:text-slate-300 ${currentDM?.id === convo.user.id ? 'text-slate-200' : 'text-slate-400'}`}>
+                    <p className={`text-xs truncate ${currentDM?.id === convo.user.id ? 'text-slate-300' : 'text-slate-400'} group-hover:text-slate-300`}>
                       {convo.lastMessage.userId === session?.user?.id ? 'You: ' : ''}
                       {convo.lastMessage.content}
                     </p>
                   )}
                 </div>
-                {unreadDmSenders.has(convo.user.id) && (
-                  <span className="w-2.5 h-2.5 bg-red-500 rounded-full flex-shrink-0"></span>
+                {unreadDmSenders.has(convo.user.id) && ! (currentDM?.id === convo.user.id) && ( // Show dot only if unread AND not currently selected
+                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0 ml-auto"></span>
                 )}
               </button>
             ))}
@@ -205,17 +209,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
 
 
       {/* Team Members Section (Original "Direct Messages Section") */}
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="p-3"> {/* Reduced p-4 to p-3 */}
+        <div className="flex items-center justify-between mb-2"> {/* Reduced mb-4 to mb-2 */}
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"> {/* Matched style */}
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"> {/* Matched style */}
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
             Team ({workspace?.members?.length || 0})
           </h3>
           <button 
             onClick={() => setShowInviteUser(true)}
-            className="text-slate-400 hover:text-white hover:bg-slate-700 p-1 rounded transition-colors"
+            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
             title="Invite user"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -229,23 +233,25 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             <button
               key={member.user.id}
               onClick={() => onDirectMessage(member.user)}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-700 transition-colors group"
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-slate-100 group"
             >
-              <div className="relative">
-                <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
-                  <span className="text-white text-xs font-semibold">
+              <div className="relative flex-shrink-0">
+                 <div className="w-6 h-6 bg-gradient-to-br from-slate-500 to-slate-600 rounded-full flex items-center justify-center"> {/* Consistent avatar size */}
+                  <span className="text-white text-[10px] font-semibold">
                     {member.user.name?.[0]?.toUpperCase() || member.user.username[0]?.toUpperCase()}
                   </span>
                 </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-slate-800 rounded-full"></div>
+                {/* TODO: Dynamic online status indicator */}
+                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
               </div>
               <div className="flex-1 min-w-0 text-left">
-                <p className="truncate font-medium group-hover:text-white">
+                <p className="truncate text-slate-200 group-hover:text-white">
                   {member.user.name || member.user.username}
                 </p>
-                <p className="text-xs text-slate-400 capitalize">
+                {/* Role can be removed for cleaner DM list, or kept if important for context */}
+                {/* <p className="text-xs text-slate-400 capitalize group-hover:text-slate-300">
                   {member.role.toLowerCase()}
-                </p>
+                </p> */}
               </div>
             </button>
           ))}

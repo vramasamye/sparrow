@@ -27,7 +27,7 @@ export function MessageList({ messages }: MessageListProps) {
       if (mentionRegex.test(part)) {
         // It's a mention
         return (
-          <span key={index} className="bg-indigo-100 text-indigo-700 font-medium p-0.5 rounded-sm mx-px">
+          <span key={index} className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline cursor-pointer">
             {part}
           </span>
         );
@@ -94,35 +94,41 @@ export function MessageList({ messages }: MessageListProps) {
         return (
           <div key={message.id}>
             {showDateDivider && (
-              <div className="flex items-center my-6">
-                <div className="flex-1 border-t border-slate-200"></div>
-                <div className="px-4 py-1 text-xs font-medium text-slate-500 bg-slate-50 rounded-full border border-slate-200">
+              <div className="flex items-center my-4"> {/* Reduced my-6 to my-4 */}
+                <div className="flex-1 border-t border-slate-200 dark:border-slate-700"></div> {/* Dark mode border */}
+                <div className="px-3 py-0.5 text-xs font-medium text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm"> {/* Adjusted padding, bg, shadow */}
                   {messageDate}
                 </div>
-                <div className="flex-1 border-t border-slate-200"></div>
+                <div className="flex-1 border-t border-slate-200 dark:border-slate-700"></div> {/* Dark mode border */}
               </div>
             )}
-            
-            <div className="flex gap-3 hover:bg-white p-3 rounded-xl transition-colors group">
+            {/* Reduced overall padding from p-3 to p-2, hover bg changed */}
+            <div className="flex gap-2.5 hover:bg-slate-100 dark:hover:bg-slate-700/50 p-2 rounded-lg transition-colors group relative">
               <div className="flex-shrink-0">
-                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm font-semibold">
-                    {message.user.name?.[0]?.toUpperCase() || message.user.username[0]?.toUpperCase()}
-                  </span>
-                </div>
+                 {/* Reduced avatar size from w-10 h-10 to w-9 h-9 */}
+                {message.user.avatar ? (
+                  <img src={message.user.avatar} alt={message.user.name || message.user.username} className="w-9 h-9 rounded-md object-cover"/>
+                ) : (
+                  <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-md flex items-center justify-center">
+                    <span className="text-white text-xs font-semibold">
+                      {message.user.name?.[0]?.toUpperCase() || message.user.username[0]?.toUpperCase()}
+                    </span>
+                  </div>
+                )}
               </div>
               
               <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2 mb-1">
-                  <span className="font-semibold text-slate-900">
+                <div className="flex items-baseline gap-2 mb-0.5"> {/* Reduced mb-1 to mb-0.5 */}
+                  <span className="font-semibold text-slate-800 dark:text-slate-100 text-sm"> {/* Dark mode text */}
                     {message.user.name || message.user.username}
                   </span>
-                  <span className="text-xs text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="text-xs text-slate-400 dark:text-slate-500"> {/* Always visible, dark mode text */}
                     {formatTime(message.createdAt)}
                   </span>
                 </div>
                 
-                <div className="text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
+                {/* Adjusted leading, dark mode text */}
+                <div className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words leading-normal text-sm">
                   {renderMessageContent(message.content)}
                 </div>
 
@@ -157,19 +163,20 @@ export function MessageList({ messages }: MessageListProps) {
                 )}
               </div>
               
-              <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="flex gap-1">
-                  <button className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                  </button>
-                  <button className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                    </svg>
-                  </button>
-                </div>
+              {/* Message Hover Actions - positioned top-right */}
+              <div className="absolute top-1 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center space-x-0.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md shadow-sm p-0.5">
+                {/* Placeholder: Emoji Reaction Button */}
+                <button title="Add reaction" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </button>
+                {/* Placeholder: Reply in Thread Button */}
+                <button title="Reply in thread" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                </button>
+                {/* Placeholder: More Actions Button */}
+                <button title="More actions" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+                </button>
               </div>
             </div>
           </div>
