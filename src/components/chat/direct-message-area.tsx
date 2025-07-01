@@ -13,16 +13,29 @@ interface DirectMessageAreaProps {
     name?: string
     avatar?: string
   }
+  workspaceMembers?: any[] // Re-using WorkspaceMember type from MessageComposer context
   onClose: () => void
 }
 
-export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps) {
+export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }: DirectMessageAreaProps) {
   const { data: session } = useSession()
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
-  const [dmChannel, setDmChannel] = useState<any>(null)
+  // const [dmChannel, setDmChannel] = useState<any>(null) // Removed: DMs are not channels
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { sendDirectMessage, onNewDirectMessage, joinChannel, isConnected } = useSocket()
+  const {
+    sendDirectMessage,
+    onNewDirectMessage,
+    isConnected,
+    onMessageUpdated, // For message edits
+    onMessageDeleted,  // For message deletes
+    startDmTyping,    // DM Typing
+    stopDmTyping,     // DM Typing
+    onDmUserTyping,   // DM Typing
+    onDmUserStopTyping// DM Typing
+  } = useSocket()
+
+  const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
 
   useEffect(() => {
     loadDirectMessages()
@@ -32,18 +45,70 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
     scrollToBottom()
   }, [messages])
 
-  useEffect(() => {
-    if (dmChannel?.id) {
-      joinChannel(dmChannel.id)
-    }
-  }, [dmChannel?.id, joinChannel])
+  // Removed useEffect for joining dmChannel
 
   useEffect(() => {
     const cleanup = onNewDirectMessage((newMessage) => {
-      setMessages(prev => [...prev, newMessage])
-    })
-    return cleanup
-  }, [onNewDirectMessage])
+      // Ensure this message is part of the current DM conversation
+      if (newMessage.userId === otherUser.id || newMessage.recipientId === otherUser.id) {
+         setMessages(prev => [...prev, newMessage])
+      }
+    });
+
+    // Handle message updates for DMs
+    const cleanupMessageUpdated = onMessageUpdated((updatedMessage) => {
+      // Check if the updated message belongs to this DM conversation
+      const isToCurrentUser = updatedMessage.recipientId === session?.user?.id && updatedMessage.userId === otherUser.id;
+      const isFromCurrentUser = updatedMessage.userId === session?.user?.id && updatedMessage.recipientId === otherUser.id;
+
+      if (isToCurrentUser || isFromCurrentUser) {
+        setMessages(prevMessages =>
+          prevMessages.map(msg => msg.id === updatedMessage.id ? { ...msg, ...updatedMessage, user: msg.user } : msg)
+        );
+      }
+    });
+
+    // Handle message deletions for DMs
+    const cleanupMessageDeleted = onMessageDeleted((deletedMessageData) => {
+       // Check if the deleted message belongs to this DM conversation
+      const isRelevantDM =
+        (deletedMessageData.userId === session?.user?.id && deletedMessageData.recipientId === otherUser.id) ||
+        (deletedMessageData.recipientId === session?.user?.id && deletedMessageData.userId === otherUser.id);
+
+      if (isRelevantDM) {
+        setMessages(prevMessages => prevMessages.filter(msg => msg.id !== deletedMessageData.id));
+      }
+    });
+
+    return () => {
+      cleanup();
+      cleanupMessageUpdated();
+      cleanupMessageDeleted();
+    }
+  }, [onNewDirectMessage, onMessageUpdated, onMessageDeleted, otherUser.id, session?.user?.id])
+
+  // DM Typing Indicator Effects
+  useEffect(() => {
+    if (!otherUser?.id || !session?.user?.id) return;
+
+    const typingCleanup = onDmUserTyping((data) => {
+      if (data.senderId === otherUser.id) {
+        setIsOtherUserTyping(true);
+      }
+    });
+
+    const stopTypingCleanup = onDmUserStopTyping((data) => {
+      if (data.senderId === otherUser.id) {
+        setIsOtherUserTyping(false);
+      }
+    });
+
+    return () => {
+      typingCleanup();
+      stopTypingCleanup();
+    };
+  }, [onDmUserTyping, onDmUserStopTyping, otherUser?.id, session?.user?.id]);
+
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -52,12 +117,26 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
   const loadDirectMessages = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`/api/direct-messages?userId=${otherUser.id}`)
+      // Corrected API endpoint for fetching messages
+      const token = localStorage.getItem('token'); // Assuming token is stored this way
+      const response = await fetch(`/api/messages?recipientId=${otherUser.id}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
       const data = await response.json()
       
-      if (data.channel && data.messages) {
-        setDmChannel(data.channel)
+      // DMs don't have a "channel" object in the same way channels do.
+      // The concept of dmChannel and joining a channel for DMs will be removed.
+      if (data.messages) {
+        // setDmChannel(null); // No separate DM channel object needed
         setMessages(data.messages)
+      } else if (response.status === 403) {
+        console.error("Unauthorized to fetch direct messages or no conversation yet.");
+        setMessages([]); // Set to empty if not authorized or no convo
+      } else {
+        console.error("Failed to parse messages or unexpected response structure:", data);
+        setMessages([]);
       }
     } catch (error) {
       console.error('Failed to load direct messages:', error)
@@ -67,11 +146,18 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
   }
 
   const handleSendMessage = async (content: string) => {
+    if (!session?.user?.id) {
+      console.error("User not authenticated to send message");
+      return;
+    }
     try {
-      const response = await fetch('/api/direct-messages', {
+      // Corrected API endpoint for sending messages
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/messages', { // Corrected endpoint
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           content,
@@ -82,71 +168,83 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
       const data = await response.json()
       
       if (data.message) {
-        setMessages(prev => [...prev, data.message])
+        // Optimistic update is tricky if we rely on socket for "self" message too.
+        // Backend `new_direct_message` sends to both sender and recipient.
+        // So, we can choose to rely on socket for adding the message to avoid duplication.
+        // For now, let's remove optimistic add from API response if socket is connected.
+        // If not connected, this optimistic add is useful.
+        if (!isConnected) {
+            setMessages(prev => [...prev, data.message]);
+        }
         
         // Send real-time message if connected
         if (isConnected) {
-          sendDirectMessage(otherUser.id, data.message)
+          sendDirectMessage(otherUser.id, content); // Corrected: pass content string
         }
+      } else {
+        console.error("Failed to send message, API response error:", data.error || response.statusText);
       }
     } catch (error) {
-      console.error('Failed to send direct message:', error)
+      console.error('Failed to send direct message:', error);
     }
   }
 
   return (
     <div className="flex flex-col h-full">
       {/* DM Header */}
-      <div className="border-b border-slate-200 p-4 bg-white shadow-sm">
+      {/* p-3 for compactness, dark mode styles, consistent with MessageArea header */}
+      <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
+          <div className="flex items-center gap-2.5 min-w-0"> {/* gap-2.5 */}
+            {/* Back button for mobile/responsive (optional, can be handled by parent layout) */}
+            {/* <button
               onClick={onClose}
-              className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors lg:hidden"
+              className="p-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md lg:hidden"
+              title="Back"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm font-semibold">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button> */}
+            <div className="relative flex-shrink-0">
+              {otherUser.avatar ? (
+                <img src={otherUser.avatar} alt={otherUser.name || otherUser.username} className="w-7 h-7 rounded-full object-cover" /> /* Smaller avatar */
+              ) : (
+                <div className="w-7 h-7 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
+                  <span className="text-white text-[10px] font-semibold"> {/* Smaller text */}
                     {otherUser.name?.[0]?.toUpperCase() || otherUser.username[0]?.toUpperCase()}
                   </span>
                 </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-white rounded-full"></div>
-              </div>
-              <div>
-                <h2 className="font-semibold text-slate-900">
-                  {otherUser.name || otherUser.username}
-                </h2>
-                <p className="text-sm text-slate-500">
-                  @{otherUser.username}
-                </p>
-              </div>
+              )}
+              {/* TODO: Dynamic presence indicator */}
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-white dark:border-slate-800 rounded-full"></div>
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate"> {/* text-sm */}
+                {otherUser.name || otherUser.username}
+              </h2>
+              {/* Username can be a secondary detail or hidden for more space */}
+              {/* <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                @{otherUser.username}
+              </p> */}
             </div>
           </div>
           
-          <div className="flex items-center gap-2">
-            <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-              </svg>
+          <div className="flex items-center gap-1"> {/* Reduced gap */}
+             {/* Placeholder: Call button */}
+             <button title="Start a call" className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
             </button>
-            <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
+            {/* Placeholder: More Info/Actions Button */}
+            <button title="View user info" className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </button>
-            <button
+            {/* Close button - useful on larger screens too if DM area is not full height / part of a multi-column layout */}
+            {/* <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
+              title="Close DM"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button> */}
           </div>
         </div>
       </div>
@@ -183,11 +281,21 @@ export function DirectMessageArea({ otherUser, onClose }: DirectMessageAreaProps
         )}
       </div>
 
+      {/* Typing Indicator */}
+      {isOtherUserTyping && (
+        <div className="px-4 pt-1 pb-2 text-xs text-slate-500 italic">
+          {otherUser.name || otherUser.username} is typing...
+        </div>
+      )}
+
       {/* Message Composer */}
       <div className="bg-white border-t border-slate-200">
         <MessageComposer 
           onSendMessage={handleSendMessage}
           placeholder={`Message ${otherUser.name || otherUser.username}`}
+          onStartTyping={() => startDmTyping(otherUser.id)}
+          onStopTyping={() => stopDmTyping(otherUser.id)}
+          workspaceMembers={workspaceMembers}
         />
       </div>
     </div>

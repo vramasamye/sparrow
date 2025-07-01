@@ -6,9 +6,92 @@ import { SocketUser, TypingData, MessageData } from '../types'
 
 // Store connected users
 const connectedUsers = new Map<string, SocketUser>()
-const userSockets = new Map<string, string>() // userId -> socketId
+import { Express } from 'express'; // Import Express type
 
-export const socketHandler = (io: Server) => {
+    // const userSockets = new Map<string, string>() // userId -> socketId - This will be managed on app instance
+
+
+// Helper function to parse mentions and create/emit notifications for socket context
+async function handleMentionsAndNotificationsSocket(
+  io: Server,
+  app: Express, // Add app parameter
+  message: any, // Should be a Prisma.MessageGetPayload_decorated type after creation
+  senderId: string,
+  workspaceId?: string,
+  channelId?: string
+) {
+  const content = message.content as string
+  const mentionRegex = /@([\w.-]+)/g
+  let match
+  const mentionedUsernames: string[] = []
+  while ((match = mentionRegex.exec(content)) !== null) {
+    mentionedUsernames.push(match[1])
+  }
+
+  if (mentionedUsernames.length === 0) {
+    return { mentionedUserIds: [] }
+  }
+
+  const users = await db.user.findMany({
+    where: {
+      username: { in: mentionedUsernames },
+      ...(workspaceId && { members: { some: { workspaceId } } }),
+    },
+    select: { id: true, username: true },
+  })
+
+  const mentionedUserIds = users.map(u => u.id)
+  const userSocketsMap = app.get('userSockets') as Map<string, string> | undefined;
+
+
+  if (mentionedUserIds.length > 0) {
+    const notificationCreateData = mentionedUserIds
+      .filter(id => id !== senderId)
+      .map(userId => ({
+        userId,
+        type: 'mention' as const,
+        messageId: message.id,
+        channelId: channelId,
+        senderId,
+      }))
+
+    if (notificationCreateData.length > 0) {
+      await db.notification.createMany({
+        data: notificationCreateData,
+      })
+
+      // Emit 'new_notification' to each mentioned user if they are online
+      for (const notification of notificationCreateData) {
+        const recipientSocketId = userSocketsMap?.get(notification.userId)
+        if (recipientSocketId) {
+          // Fetch the full notification object to send to the client
+          const fullNotification = await db.notification.findFirst({
+            where: {
+                messageId: notification.messageId,
+                userId: notification.userId,
+                type: 'mention'
+            },
+            orderBy: { createdAt: 'desc'}, // In case of duplicate for some reason
+            include: {
+                sender: { select: { id: true, username: true, name: true }},
+                message: { select: { id: true, content: true, channelId: true }},
+                channel: { select: { id: true, name: true }}
+            }
+          })
+          if (fullNotification) {
+            io.to(recipientSocketId).emit('new_notification', fullNotification)
+          }
+        }
+      }
+    }
+  }
+  return { mentionedUserIds }
+}
+
+
+export const socketHandler = (io: Server, app: Express) => { // Add app parameter
+  const userSocketsMap = app.get('userSockets') as Map<string, string>;
+
   // Authentication middleware for socket connections
   io.use(async (socket, next) => {
     try {
@@ -84,7 +167,9 @@ export const socketHandler = (io: Server) => {
     }
 
     connectedUsers.set(socket.id, socketUser)
-    userSockets.set(socket.data.user.id, socket.id)
+    if (userSocketsMap) {
+        userSocketsMap.set(socket.data.user.id, socket.id);
+    }
 
     // Join workspace room
     socket.on('join_workspace', async (workspaceId: string) => {
@@ -143,6 +228,22 @@ export const socketHandler = (io: Server) => {
 
         socket.join(`channel:${channelId}`)
         logger.info(`User ${socket.data.user.username} joined channel ${channelId}`)
+
+        // Emit event to workspace
+        const user = socket.data.user
+        const channel = await db.channel.findUnique({ where: { id: channelId }, select: { name: true, workspaceId: true, isPrivate: true }})
+        if (channel && channel.workspaceId) {
+            io.to(`workspace:${channel.workspaceId}`).emit('user_joined_channel', {
+                userId: user.id,
+                username: user.username,
+                name: user.name,
+                channelId: channelId,
+                channelName: channel.name,
+                isPrivate: channel.isPrivate,
+                workspaceId: channel.workspaceId
+            })
+        }
+
       } catch (error) {
         logger.error('Join channel error:', error)
         socket.emit('error', { message: 'Failed to join channel' })
@@ -150,9 +251,34 @@ export const socketHandler = (io: Server) => {
     })
 
     // Leave channel room
-    socket.on('leave_channel', (channelId: string) => {
+    socket.on('leave_channel', async (data: { channelId: string, workspaceId: string }) => {
+      const { channelId, workspaceId } = data; // Client should send workspaceId for broadcast
       socket.leave(`channel:${channelId}`)
       logger.info(`User ${socket.data.user.username} left channel ${channelId}`)
+
+      // Emit event to workspace
+      if (workspaceId) {
+        io.to(`workspace:${workspaceId}`).emit('user_left_channel', {
+            userId: socket.data.user.id,
+            username: socket.data.user.username,
+            channelId: channelId,
+            workspaceId: workspaceId
+        })
+      } else {
+        // Fallback: try to get workspaceId from connectedUsers map if client doesn't send it
+        // This is less reliable as user might not be in connectedUsers' workspace context correctly
+        const user = connectedUsers.get(socket.id);
+        if (user && user.workspaceId) {
+             io.to(`workspace:${user.workspaceId}`).emit('user_left_channel', {
+                userId: socket.data.user.id,
+                username: socket.data.user.username,
+                channelId: channelId,
+                workspaceId: user.workspaceId
+            })
+        } else {
+            logger.warn(`Could not determine workspaceId for user ${socket.data.user.username} leaving channel ${channelId} to broadcast user_left_channel.`);
+        }
+      }
     })
 
     // Handle new message
@@ -167,44 +293,55 @@ export const socketHandler = (io: Server) => {
         }
 
         let message
+        const senderUser = socket.data.user
 
         if (channelId) {
           // Channel message
-          // Verify user is member of channel
           const membership = await db.channelMember.findFirst({
-            where: {
-              channelId,
-              userId
-            }
+            where: { channelId, userId },
           })
-
           if (!membership) {
             socket.emit('error', { message: 'Not authorized to send message to this channel' })
             return
           }
 
-          // Get channel to find workspace
-          const channel = await db.channel.findUnique({
-            where: { id: channelId }
-          })
+          const channel = await db.channel.findUnique({ where: { id: channelId } })
+          if (!channel) {
+            socket.emit('error', { message: 'Channel not found' })
+            return
+          }
 
-          message = await db.message.create({
+          // 1. Create message
+          let createdMessage = await db.message.create({
             data: {
               content,
               userId,
               channelId,
-              workspaceId: channel?.workspaceId
+              workspaceId: channel.workspaceId,
             },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  username: true,
-                  name: true
-                }
-              }
-            }
+            include: { user: { select: { id: true, username: true, name: true } } },
           })
+
+          // 2. Handle mentions and notifications
+          const { mentionedUserIds } = await handleMentionsAndNotificationsSocket(
+            io,
+            app, // Pass app
+            createdMessage,
+            userId,
+            channel.workspaceId,
+            channelId
+          )
+
+          // 3. Update message with mentionedUserIds if any
+          if (mentionedUserIds.length > 0) {
+            createdMessage = await db.message.update({
+              where: { id: createdMessage.id },
+              data: { mentionedUserIds: mentionedUserIds.join(',') },
+              include: { user: { select: { id: true, username: true, name: true } } },
+            })
+          }
+
+          message = createdMessage // Use the potentially updated message
 
           // Broadcast to channel members
           io.to(`channel:${channelId}`).emit('new_message', {
@@ -213,27 +350,16 @@ export const socketHandler = (io: Server) => {
             userId: message.userId,
             channelId: message.channelId,
             workspaceId: message.workspaceId,
+            mentionedUserIds: message.mentionedUserIds,
             createdAt: message.createdAt.toISOString(),
-            user: message.user
+            user: message.user,
           })
 
         } else if (recipientId) {
           // Direct message
           message = await db.message.create({
-            data: {
-              content,
-              userId,
-              recipientId
-            },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  username: true,
-                  name: true
-                }
-              }
-            }
+            data: { content, userId, recipientId },
+            include: { user: { select: { id: true, username: true, name: true } } },
           })
 
           const messageData: MessageData = {
@@ -242,30 +368,51 @@ export const socketHandler = (io: Server) => {
             userId: message.userId,
             recipientId: message.recipientId,
             createdAt: message.createdAt.toISOString(),
-            user: message.user
+            user: message.user,
           }
 
           // Send to sender
           socket.emit('new_direct_message', messageData)
 
           // Send to recipient if online
-          const recipientSocketId = userSockets.get(recipientId)
+          const recipientSocketId = userSocketsMap?.get(recipientId)
           if (recipientSocketId) {
             io.to(recipientSocketId).emit('new_direct_message', messageData)
+
+            // Create and emit notification for DM
+            if (userId !== recipientId) {
+              const notification = await db.notification.create({
+                data: {
+                  userId: recipientId,
+                  type: 'new_dm',
+                  messageId: message.id,
+                  senderId: userId,
+                },
+                include: {
+                    sender: { select: { id: true, username: true, name: true }},
+                    message: { select: { id: true, content: true, channelId: true, recipientId: true }},
+                }
+              })
+              io.to(recipientSocketId).emit('new_notification', notification)
+            }
           }
+        } else {
+            socket.emit('error', { message: 'Message target (channelId or recipientId) is required.'})
+            return
         }
 
-        logger.info(`Message sent by ${socket.data.user.username}`)
+        logger.info(`Message sent by ${senderUser.username} to ${channelId ? `channel ${channelId}` : `user ${recipientId}`}`)
       } catch (error) {
         logger.error('Send message error:', error)
         socket.emit('error', { message: 'Failed to send message' })
       }
     })
 
-    // Handle typing indicators
+    // Handle typing indicators for Channels
     socket.on('start_typing', async (data: { channelId: string }) => {
       try {
         const { channelId } = data
+        const currentUser = socket.data.user;
         
         // Verify user is member of channel
         const membership = await db.channelMember.findFirst({
@@ -294,12 +441,13 @@ export const socketHandler = (io: Server) => {
     socket.on('stop_typing', async (data: { channelId: string }) => {
       try {
         const { channelId } = data
+        const currentUser = socket.data.user;
         
         // Verify user is member of channel
         const membership = await db.channelMember.findFirst({
           where: {
             channelId,
-            userId: socket.data.user.id
+            userId: currentUser.id
           }
         })
 
@@ -308,13 +456,39 @@ export const socketHandler = (io: Server) => {
         }
 
         socket.to(`channel:${channelId}`).emit('user_stop_typing', {
-          userId: socket.data.user.id,
+          userId: currentUser.id,
           channelId
         })
       } catch (error) {
         logger.error('Stop typing error:', error)
       }
     })
+
+    // Handle DM Typing Indicators
+    socket.on('dm_start_typing', (data: { recipientId: string }) => {
+      const { recipientId } = data;
+      const sender = socket.data.user;
+      const recipientSocketId = userSocketsMap?.get(recipientId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('dm_user_typing', {
+          senderId: sender.id,
+          senderUsername: sender.username,
+        });
+      }
+    });
+
+    socket.on('dm_stop_typing', (data: { recipientId: string }) => {
+      const { recipientId } = data;
+      const sender = socket.data.user;
+      const recipientSocketId = userSocketsMap?.get(recipientId);
+
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('dm_user_stop_typing', {
+          senderId: sender.id,
+        });
+      }
+    });
 
     // Handle disconnect
     socket.on('disconnect', () => {
@@ -331,7 +505,9 @@ export const socketHandler = (io: Server) => {
 
       // Remove user from connected users
       connectedUsers.delete(socket.id)
-      userSockets.delete(socket.data.user.id)
+      if (userSocketsMap) {
+        userSocketsMap.delete(socket.data.user.id);
+      }
     })
 
     // Handle errors
@@ -341,15 +517,19 @@ export const socketHandler = (io: Server) => {
   })
 
   // Utility functions for external use
+  // These may need `app` if they are to be called from outside, or be refactored
+  // For now, assuming they are called from contexts where `app` or `userSocketsMap` is available
+  // Or, they are fine if `userSocketsMap` is kept up-to-date by the main handler instance.
   return {
     getConnectedUsers: () => Array.from(connectedUsers.values()),
-    getUserSocket: (userId: string) => userSockets.get(userId),
-    emitToUser: (userId: string, event: string, data: any) => {
-      const socketId = userSockets.get(userId)
-      if (socketId) {
-        io.to(socketId).emit(event, data)
-      }
-    },
+    // getUserSocket: (userId: string) => userSocketsMap?.get(userId), // This would need app if called externally
+    // emitToUser: (userId: string, event: string, data: any) => { // This would need app
+    //   const socketId = userSocketsMap?.get(userId)
+    //   if (socketId) {
+    //     io.to(socketId).emit(event, data)
+    //   }
+    // },
+    // The following are fine as they use io directly for room emissions
     emitToWorkspace: (workspaceId: string, event: string, data: any) => {
       io.to(`workspace:${workspaceId}`).emit(event, data)
     },

@@ -4,19 +4,53 @@ import { useState, useRef, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import { useSocket } from '@/hooks/useSocket'
 
+interface WorkspaceMember {
+  user: {
+    id: string
+    username: string
+    name?: string
+  }
+  // other member props like role if needed
+}
+
 interface MessageComposerProps {
   onSendMessage: (content: string) => void
   placeholder?: string
-  channelId?: string
+  channelId?: string // For channel-based typing indicators
+  workspaceMembers?: WorkspaceMember[]
+  // Generic typing handlers for DM or other contexts
+  onStartTyping?: () => void
+  onStopTyping?: () => void
 }
 
-export function MessageComposer({ onSendMessage, placeholder = "Type a message...", channelId }: MessageComposerProps) {
+export function MessageComposer({
+  onSendMessage,
+  placeholder = "Type a message...",
+  channelId,
+  workspaceMembers = [],
+  onStartTyping,
+  onStopTyping
+}: MessageComposerProps) {
   const [message, setMessage] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
+  const [isTyping, setIsTyping] = useState(false) // Local state to manage timeout
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const { data: session } = useSession()
-  const { startTyping, stopTyping } = useSocket()
+  // Socket methods for channel typing are still here, but will only be called if channelId is present
+  const { startTyping: startChannelTyping, stopTyping: stopChannelTyping } = useSocket()
+
+  // For @mention suggestions
+  const [mentionQuery, setMentionQuery] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 })
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+
+  const filteredMembers = mentionQuery
+    ? workspaceMembers.filter(member =>
+        member.user.username.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+        (member.user.name && member.user.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      ).slice(0, 5) // Limit suggestions
+    : []
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -24,14 +58,67 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
     if (message.trim()) {
       onSendMessage(message.trim())
       setMessage('')
+      setShowSuggestions(false)
       handleStopTyping()
     }
   }
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value
+    setMessage(text)
+    handleTyping()
+
+    const cursorPos = e.target.selectionStart
+    const textBeforeCursor = text.substring(0, cursorPos)
+    const atMatch = textBeforeCursor.match(/@([\w.-]*)$/)
+
+    if (atMatch) {
+      const query = atMatch[1]
+      setMentionQuery(query)
+      setShowSuggestions(true)
+      setActiveSuggestionIndex(0)
+
+      // Calculate position for suggestions dropdown
+      // This is a simplified positioning, might need a library for robustness
+      const rect = e.target.getBoundingClientRect()
+      // Attempt to get cursor position, needs more advanced handling for precise x,y
+      // For now, position below the textarea input.
+      setSuggestionPosition({ top: rect.bottom + window.scrollY, left: rect.left + window.scrollX })
+
+    } else {
+      setShowSuggestions(false)
+      setMentionQuery('')
+    }
+  }
+
+  const handleSelectMention = (username: string) => {
+    const cursorPos = textareaRef.current?.selectionStart ?? message.length
+    const textBeforeCursor = message.substring(0, cursorPos)
+    const atMatch = textBeforeCursor.match(/@([\w.-]*)$/)
+
+    if (atMatch) {
+      const queryLength = atMatch[1].length
+      const startOfMention = cursorPos - queryLength -1 // -1 for '@'
+      const newMessage =
+        message.substring(0, startOfMention) +
+        `@${username} ` +
+        message.substring(cursorPos)
+      setMessage(newMessage)
+      setShowSuggestions(false)
+      setMentionQuery('')
+      textareaRef.current?.focus()
+    }
+  }
+
+
   const handleTyping = () => {
-    if (!isTyping && channelId && session?.user) {
+    if (!isTyping && session?.user) {
       setIsTyping(true)
-      startTyping(channelId, session.user.id, session.user.username || session.user.name || 'User')
+      if (onStartTyping) {
+        onStartTyping()
+      } else if (channelId) { // Fallback to channel typing if no specific handler
+        startChannelTyping(channelId) // Note: startChannelTyping might need more params if you updated its signature
+      }
     }
 
     // Clear existing timeout
@@ -46,19 +133,38 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
   }
 
   const handleStopTyping = () => {
-    if (isTyping && channelId && session?.user) {
+    if (isTyping && session?.user) {
       setIsTyping(false)
-      stopTyping(channelId, session.user.id)
+      if (onStopTyping) {
+        onStopTyping()
+      } else if (channelId) { // Fallback to channel typing
+        stopChannelTyping(channelId) // Note: stopChannelTyping might need more params if you updated its signature
+      }
     }
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current)
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSuggestions && filteredMembers.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setActiveSuggestionIndex(prev => (prev + 1) % filteredMembers.length)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setActiveSuggestionIndex(prev => (prev - 1 + filteredMembers.length) % filteredMembers.length)
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (!e.shiftKey) { // Allow Shift+Enter for newline
+          e.preventDefault()
+          handleSelectMention(filteredMembers[activeSuggestionIndex].user.username)
+        }
+      } else if (e.key === 'Escape') {
+        setShowSuggestions(false)
+      }
+    } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSubmit(e)
+      handleSubmit(e as unknown as React.FormEvent)
     }
   }
 
@@ -70,30 +176,66 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
   }, [message])
 
   return (
-    <div className="bg-white p-4">
-      <form onSubmit={handleSubmit} className="flex gap-3">
+    // Reduced padding, added dark mode bg for composer area
+    <div className="bg-white dark:bg-slate-800 p-3 border-t border-slate-200 dark:border-slate-700">
+      {/* Use items-end for vertical alignment with a potentially multi-line textarea */}
+      <form onSubmit={handleSubmit} className="flex items-end gap-2">
         <div className="flex-1 relative">
-          <div className="border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
+          {/* Main input and formatting toolbar container */}
+          {/* Dark mode borders and focus ring */}
+          <div className="border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 dark:focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
             <textarea
               ref={textareaRef}
               value={message}
-              onChange={(e) => {
-                setMessage(e.target.value)
-                handleTyping()
-              }}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              onBlur={handleStopTyping}
+              onBlur={() => {
+                handleStopTyping()
+                // Delay hiding suggestions to allow click
+                setTimeout(() => setShowSuggestions(false), 100)
+              }}
               placeholder={placeholder}
-              className="w-full resize-none px-4 py-3 focus:outline-none max-h-32 min-h-[52px] placeholder-slate-400"
+              // Adjusted padding, min-height, dark mode styles
+              className="w-full resize-none px-3 py-2.5 focus:outline-none max-h-36 min-h-[44px] placeholder-slate-400 dark:placeholder-slate-500 bg-transparent dark:text-slate-100"
               rows={1}
             />
+
+            {showSuggestions && filteredMembers.length > 0 && (
+              <div
+                className="absolute z-10 w-full max-w-xs bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-xl overflow-hidden" // Dark mode for suggestions
+                style={{
+                  bottom: '100%', // Position above the input area
+                  left: 0, // Align with left of input area, adjust as needed
+                  marginBottom: '8px' // Small gap
+                }}
+              >
+                <ul className="max-h-48 overflow-y-auto">
+                  {filteredMembers.map((member, index) => (
+                    <li key={member.user.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectMention(member.user.username)}
+                        className={`w-full text-left px-4 py-2 text-sm ${
+                          index === activeSuggestionIndex ? 'bg-indigo-500 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span className="font-medium">{member.user.name || member.user.username}</span>
+                        <span className={`ml-2 ${index === activeSuggestionIndex ? 'text-indigo-200' : 'text-slate-500'}`}>
+                          @{member.user.username}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             
-            {/* Formatting Toolbar */}
-            <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-t border-slate-200">
-              <div className="flex gap-1">
+            {/* Formatting Toolbar - dark mode styles, reduced padding */}
+            <div className="flex items-center justify-between px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border-t border-slate-200 dark:border-slate-600">
+              <div className="flex gap-0.5"> {/* Reduced gap */}
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Bold"
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -102,7 +244,7 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Italic"
                 >
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -111,7 +253,7 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Attach file"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -120,7 +262,7 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
                 </button>
                 <button
                   type="button"
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded transition-colors"
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Emoji"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -129,22 +271,23 @@ export function MessageComposer({ onSendMessage, placeholder = "Type a message..
                 </button>
               </div>
               
-              <div className="text-xs text-slate-500">
-                <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Enter</kbd> to send, <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Shift</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-200 rounded text-xs">Enter</kbd> for new line
-              </div>
+              {/* Keyboard shortcut hint - can be removed for very compact UI */}
+              {/* <div className="text-xs text-slate-500 dark:text-slate-400">
+                <kbd className="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-600 rounded text-xs">Enter</kbd> to send
+              </div> */}
             </div>
           </div>
         </div>
         
+        {/* Send Button - changed to icon button, adjusted size and alignment */}
         <button
           type="submit"
           disabled={!message.trim()}
-          className="px-6 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium self-end flex items-center gap-2"
+          className="p-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:bg-indigo-400 dark:disabled:bg-indigo-700 dark:disabled:opacity-60 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800"
+          style={{ height: '44px', width: '44px' }} // Match min-h of textarea
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-          Send
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+          <span className="sr-only">Send</span>
         </button>
       </form>
     </div>
