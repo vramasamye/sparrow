@@ -10,14 +10,19 @@ interface Message {
     name?: string
     avatar?: string
   }
-  replies?: Message[]
+  replies?: Message[] // This might be used for inline display of first few replies or can be removed if all replies go to a panel
+  parentId?: string | null
+  threadId?: string | null
+  replyCount?: number
+  lastReplyAt?: string | null // ISO string
 }
 
 interface MessageListProps {
   messages: Message[]
+  onViewThread?: (messageId: string) => void // Callback to open thread view
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, onViewThread }: MessageListProps) {
   const renderMessageContent = (content: string) => {
     if (!content) return null;
     const mentionRegex = /(@[\w.-]+)/g; // Regex to find @username patterns
@@ -132,35 +137,28 @@ export function MessageList({ messages }: MessageListProps) {
                   {renderMessageContent(message.content)}
                 </div>
 
-                {message.replies && message.replies.length > 0 && (
-                  <div className="mt-3 ml-4 border-l-2 border-indigo-200 pl-4 space-y-2 bg-indigo-50 rounded-r-lg p-3">
-                    <div className="text-xs font-medium text-indigo-700 mb-2">
-                      {message.replies.length} {message.replies.length === 1 ? 'reply' : 'replies'}
-                    </div>
-                    {message.replies.map((reply) => (
-                      <div key={reply.id} className="flex gap-2">
-                        <div className="w-6 h-6 bg-gradient-to-br from-slate-400 to-slate-600 rounded-full flex items-center justify-center flex-shrink-0">
-                          <span className="text-white text-xs font-medium">
-                            {reply.user.name?.[0]?.toUpperCase() || reply.user.username[0]?.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-sm font-medium text-slate-700">
-                              {reply.user.name || reply.user.username}
-                            </span>
-                            <span className="text-xs text-slate-500">
-                              {formatTime(reply.createdAt)}
-                            </span>
-                          </div>
-                          <div className="text-sm text-slate-800 mt-1">
-                            {reply.content}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                {/* Thread indicator and replies link */}
+                {(message.replyCount ?? 0) > 0 && (
+                  <div className="mt-1.5">
+                    <button
+                      onClick={() => onViewThread && onViewThread(message.threadId || message.id)}
+                      className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                    >
+                      {/* Placeholder for user avatars who replied - complex to implement fully here */}
+                      {/* <span className="flex -space-x-1 overflow-hidden">
+                        <img className="inline-block h-4 w-4 rounded-full ring-2 ring-white dark:ring-slate-800" src="https://via.placeholder.com/20" alt=""/>
+                        <img className="inline-block h-4 w-4 rounded-full ring-2 ring-white dark:ring-slate-800" src="https://via.placeholder.com/20" alt=""/>
+                      </span> */}
+                      <span>{message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}</span>
+                       {message.lastReplyAt && (
+                        <span className="text-slate-400 dark:text-slate-500 text-[10px]">
+                          · Last reply {formatTime(message.lastReplyAt)}
+                        </span>
+                      )}
+                    </button>
                   </div>
                 )}
+                 {/* The old message.replies block for inline display is removed in favor of thread panel */}
               </div>
               
               {/* Message Hover Actions - positioned top-right */}
@@ -169,8 +167,12 @@ export function MessageList({ messages }: MessageListProps) {
                 <button title="Add reaction" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 </button>
-                {/* Placeholder: Reply in Thread Button */}
-                <button title="Reply in thread" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
+                {/* Reply in Thread Button */}
+                <button
+                  title="Reply in thread"
+                  onClick={() => onViewThread && onViewThread(message.threadId || message.id)}
+                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded"
+                >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
                 </button>
                 {/* Placeholder: More Actions Button */}

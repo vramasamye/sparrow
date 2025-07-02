@@ -19,21 +19,37 @@ interface MessageAreaProps {
 }
 
 export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState<any[]>([]) // Use a more specific Message type if available
   const [loading, setLoading] = useState(true)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
+  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null); // State for open thread
   const messagesEndRef = useRef<HTMLDivElement>(null)
+import { ThreadPanel } from './thread-panel'; // Import ThreadPanel
+
+// ... (other imports)
+
+// ... (interface MessageAreaProps)
+
+export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
+  // ... (existing state: messages, loading, typingUsers, openedThreadId, messagesEndRef)
+  const { data: session } = useSession(); // Get session for currentUserId
   const {
     joinChannel,
     leaveChannel,
-    sendMessage,
+    sendMessage, // This will be used by MessageComposer for main messages
+                 // And potentially by ThreadPanel's composer if not specialized
     onNewMessage,
     onUserTyping,
     onUserStopTyping,
     isConnected,
-    onMessageUpdated, // New
-    onMessageDeleted  // New
+    onMessageUpdated,
+    onMessageDeleted,
+    onThreadUpdated
   } = useSocket()
+
+  const handleViewThread = (messageId: string) => {
+    setOpenedThreadId(messageId);
+  };
 
   useEffect(() => {
     if (channel?.id) {
@@ -104,6 +120,34 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
     }
   }, [channel?.id, onNewMessage, onUserTyping, onUserStopTyping, onMessageUpdated, onMessageDeleted])
 
+  // Listen for thread updates to update reply counts/last reply time on root messages
+  useEffect(() => {
+    if (!channel?.id || !onThreadUpdated) return;
+
+    const cleanupThreadUpdated = onThreadUpdated((data) => {
+      // Ensure the update is for a message in the current channel
+      // This check might be redundant if thread_updated is only sent to the relevant channel by backend
+      setMessages(prevMessages =>
+        prevMessages.map(msg => {
+          if (msg.id === data.rootMessageId && msg.channelId === channel.id) {
+            return {
+              ...msg,
+              replyCount: data.replyCount,
+              lastReplyAt: data.lastReplyAt,
+              // latestReply: data.latestReply // Storing full latestReply object might be too much here
+                                            // The UI in MessageList might just need count & time.
+            };
+          }
+          return msg;
+        })
+      );
+    });
+
+    return () => {
+      cleanupThreadUpdated();
+    };
+  }, [channel?.id, onThreadUpdated]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -163,12 +207,13 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Channel Header */}
-      <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm"> {/* p-3 for compactness, dark mode bg */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate"> {/* text-base */}
+    <div className="flex h-full"> {/* Ensure parent flex container for ThreadPanel */}
+      <div className="flex flex-col h-full flex-1"> {/* Main message area takes available space */}
+        {/* Channel Header */}
+        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm"> {/* p-3 for compactness, dark mode bg */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate"> {/* text-base */}
               <span className="text-slate-500 dark:text-slate-400"># </span>{channel.name}
             </h2>
             {channel.isPrivate && (
@@ -208,28 +253,41 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
       <div className="flex-1 overflow-y-auto bg-slate-50">
         {loading ? (
           <div className="flex items-center justify-center h-full">
-            <div className="flex items-center gap-3 text-slate-500">
-              <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-300 border-t-indigo-600"></div>
+            <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+              <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-300 dark:border-slate-600 border-t-indigo-600"></div>
               Loading messages...
             </div>
           </div>
         ) : (
           <>
-            <MessageList messages={messages} />
+            <MessageList messages={messages} onViewThread={handleViewThread} />
             <div ref={messagesEndRef} />
           </>
         )}
       </div>
 
       {/* Message Composer */}
-      <div className="bg-white border-t border-slate-200">
+      <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700"> {/* Dark mode for composer container */}
         <MessageComposer 
-          onSendMessage={handleSendMessage}
+          onSendMessage={handleSendMessage} // This sends a main channel message
           placeholder={`Message #${channel.name}`}
-          channelId={channel.id}
-          workspaceMembers={workspaceMembers}
+          channelId={channel.id} // For channel typing indicators
+          workspaceMembers={workspaceMembers} // For @mentions
         />
       </div>
     </div>
+
+    {/* Thread Panel */}
+    {openedThreadId && (
+      <ThreadPanel
+        rootMessageId={openedThreadId}
+        workspaceId={channel?.workspaceId} // Pass workspaceId for context
+        workspaceMembers={workspaceMembers} // For @mentions in thread replies
+        currentUserId={session?.user?.id}
+        onClose={() => setOpenedThreadId(null)}
+        // onMessageSent={() => { /* Optionally refetch main channel messages or specific message for replyCount update */ }}
+      />
+    )}
+  </div>
   )
 }
