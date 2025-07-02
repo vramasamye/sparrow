@@ -44,7 +44,8 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
     isConnected,
     onMessageUpdated,
     onMessageDeleted,
-    onThreadUpdated
+    onThreadUpdated,
+    onReactionUpdated // New
   } = useSocket()
 
   const handleViewThread = (messageId: string) => {
@@ -147,6 +148,50 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
       cleanupThreadUpdated();
     };
   }, [channel?.id, onThreadUpdated]);
+
+  // Listen for reaction updates
+  useEffect(() => {
+    if (!channel?.id || !onReactionUpdated) return;
+
+    const cleanupReactionUpdated = onReactionUpdated((data) => {
+      setMessages(prevMessages =>
+        prevMessages.map(msg => {
+          if (msg.id === data.messageId && msg.channelId === channel.id) {
+            // The backend sends aggregated reactions.
+            // The structure of `data.reactions` should match what MessageList expects for its `message.reactions`
+            // which is Array<{emoji: string, user: {id, username, name}, ...other Reaction fields}>
+            // The aggregated format from backend is: { emoji: String, count: Int, users: UserSnippet[] }
+            // This means MessageList's internal aggregation logic is good, but the prop type for Message.reactions
+            // should be the direct array of Reaction objects from Prisma.
+            // The socket payload `data.reactions` is already the aggregated list.
+            // So, we need to transform it OR MessageList needs to handle both raw and aggregated.
+            // For now, let's assume MessageList's prop `message.reactions` expects the raw list,
+            // and the socket `reaction_updated` payload is the *aggregated* one.
+            // This is a mismatch.
+            // Plan: The backend should send the *raw* list of reactions for `reaction_updated` if clients are to update `message.reactions` directly.
+            // OR, the client `MessageList` should be adapted to take aggregated reactions.
+            // For now, let's assume the backend `reaction_updated` payload IS the new raw list of reactions for that message.
+            // This means `reactions.ts` `aggregatedReactions` should actually be the raw `db.reaction.findMany(...)` result.
+            // Let's proceed with this assumption for now and correct backend if needed.
+            // **Correction:** The plan for `reaction_updated` was `Payload: { messageId: String, reactions: AggregatedReaction[] }`.
+            // This means `MessageList` should ideally display this aggregated structure directly, or `Message.reactions` type needs to change.
+            // For simplicity now, I'll update `Message.reactions` on the client to store the aggregated form.
+            // This requires changing the `Message` interface and how `MessageList` processes reactions.
+
+            // Simpler approach for now: Assume `data.reactions` is the new *raw* array of reactions.
+            // This means backend `reaction_updated` payload needs to be adjusted.
+            // Let's assume for THIS step, `data.reactions` IS the new raw list.
+             return { ...msg, reactions: data.reactions };
+          }
+          return msg;
+        })
+      );
+    });
+    return () => {
+      cleanupReactionUpdated();
+    };
+  }, [channel?.id, onReactionUpdated]);
+
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })

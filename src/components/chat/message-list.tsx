@@ -15,14 +15,110 @@ interface Message {
   threadId?: string | null
   replyCount?: number
   lastReplyAt?: string | null // ISO string
+  reactions?: Reaction[] // Add reactions array
 }
+
+interface ReactionUser {
+  id: string;
+  username: string;
+  name?: string;
+}
+
+interface Reaction {
+  id?: string; // ID might not be needed on client if not directly manipulating by Reaction ID
+  emoji: string;
+  userId: string;
+  user: ReactionUser; // User who made the reaction
+  // messageId and createdAt usually not needed for display on client message
+}
+
 
 interface MessageListProps {
   messages: Message[]
   onViewThread?: (messageId: string) => void // Callback to open thread view
 }
 
+import { useSession } from 'next-auth/react'; // Import useSession
+import { useState, useRef } from 'react'; // Import useState, useRef
+import { EmojiPicker } from '../emoji/emoji-picker'; // Import EmojiPicker
+
+// ... (interfaces Message, ReactionUser, Reaction, MessageListProps)
+
 export function MessageList({ messages, onViewThread }: MessageListProps) {
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+
+  const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null); // message.id or null
+  const emojiPickerRef = useRef<HTMLDivElement>(null); // For click outside to close
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      // Check if the click is outside the emoji picker and not on an "Add reaction" button
+      // (to prevent immediate closing if user clicks the same button to toggle)
+      // This specific button check might be too complex / fragile.
+      // A simpler version: if click is outside emojiPickerRef, close it.
+      // The button itself toggles based on `showEmojiPickerFor === message.id`.
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+        // A more robust check would be to see if the target is part of any "add reaction" button.
+        // For now, this will close if you click anywhere else, which is generally fine.
+        // To prevent closing when clicking the trigger button, the button's onClick should handle the toggle logic correctly.
+        setShowEmojiPickerFor(null);
+      }
+    }
+    if (showEmojiPickerFor) { // Only add listener if picker is shown
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showEmojiPickerFor]); // Re-run when picker visibility changes
+
+
+  const handleAddReaction = (messageId: string, emoji: string) => {
+    // Assuming user cannot add an emoji they've already reacted with via this picker path
+    // (i.e., picker is for adding new, distinct emoji reactions by the user)
+    // The handleReactionClick will manage adding it.
+    const currentUserHasReactedWithThisEmoji = messages
+      .find(m => m.id === messageId)?.reactions
+      ?.some(r => r.emoji === emoji && r.userId === currentUserId);
+
+    if (!currentUserHasReactedWithThisEmoji) {
+      handleReactionClick(messageId, emoji, false);
+    }
+    setShowEmojiPickerFor(null); // Close picker after selection
+  };
+
+  const handleReactionClick = async (messageId: string, emoji: string, currentUserHasReacted: boolean) => {
+    if (!session) return;
+    const token = localStorage.getItem('token') || session.accessToken;
+    const apiUrl = `/api/messages/${messageId}/reactions`;
+
+    try {
+      if (currentUserHasReacted) {
+        // Remove reaction
+        await fetch(`${apiUrl}/${encodeURIComponent(emoji)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+      } else {
+        // Add reaction
+        await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ emoji }),
+        });
+      }
+      // After API call, expect a socket event 'reaction_updated' to refresh the reactions.
+      // No optimistic update here to keep it simpler and rely on socket for source of truth.
+    } catch (error) {
+      console.error("Failed to update reaction:", error);
+    }
+  };
+
+
   const renderMessageContent = (content: string) => {
     if (!content) return null;
     const mentionRegex = /(@[\w.-]+)/g; // Regex to find @username patterns
@@ -159,14 +255,67 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
                   </div>
                 )}
                  {/* The old message.replies block for inline display is removed in favor of thread panel */}
+
+                {/* Display Reactions */}
+                {message.reactions && message.reactions.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {Object.values( // Aggregate reactions by emoji
+                      message.reactions.reduce((acc, reaction) => {
+                        if (!acc[reaction.emoji]) {
+                          // Initialize with the first user who reacted with this emoji
+                          acc[reaction.emoji] = { emoji: reaction.emoji, count: 0, usersWhoReacted: [] };
+                        }
+                        acc[reaction.emoji].count++;
+                        acc[reaction.emoji].usersWhoReacted.push(reaction.user); // reaction.user is {id, username, name}
+                        return acc;
+                      }, {} as Record<string, { emoji: string; count: number; usersWhoReacted: ReactionUser[] }>)
+                    ).map(({ emoji, count, usersWhoReacted }) => {
+                      const currentUserReacted = usersWhoReacted.some(u => u.id === currentUserId);
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => handleReactionClick(message.id, emoji, currentUserReacted)}
+                          title={usersWhoReacted.map(u => u.name || u.username).join(', ')}
+                          className={`px-1.5 py-0.5 text-xs border rounded-full flex items-center gap-1 transition-colors ${
+                            currentUserReacted
+                              ? 'bg-indigo-100 dark:bg-indigo-700/50 border-indigo-300 dark:border-indigo-600 text-indigo-700 dark:text-indigo-300'
+                              : 'bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+                          }`}
+                        >
+                          <span>{emoji}</span>
+                          <span className="font-medium">{count}</span>
+                        </button>
+                      );
+                    })}
+                    {/* Placeholder for Add Reaction button directly on the reaction bar */}
+                    {/* <button className="px-1.5 py-0.5 text-xs border rounded-full ...">+</button> */}
+                  </div>
+                )}
               </div>
               
               {/* Message Hover Actions - positioned top-right */}
               <div className="absolute top-1 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center space-x-0.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md shadow-sm p-0.5">
-                {/* Placeholder: Emoji Reaction Button */}
-                <button title="Add reaction" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </button>
+                {/* Emoji Reaction Button */}
+                <div className="relative"> {/* Container for EmojiPicker positioning */}
+                  <button
+                    title="Add reaction"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Prevent click from bubbling to message item
+                      setShowEmojiPickerFor(showEmojiPickerFor === message.id ? null : message.id);
+                    }}
+                    className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </button>
+                  {showEmojiPickerFor === message.id && (
+                    <div ref={emojiPickerRef} className="absolute right-0 bottom-full mb-1"> {/* Position above and to the right */}
+                      <EmojiPicker
+                        onEmojiSelect={(emoji) => handleAddReaction(message.id, emoji)}
+                        onClose={() => setShowEmojiPickerFor(null)}
+                      />
+                    </div>
+                  )}
+                </div>
                 {/* Reply in Thread Button */}
                 <button
                   title="Reply in thread"

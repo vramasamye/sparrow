@@ -248,5 +248,11 @@ export function useSocket() {
       socket.on('thread_updated', callback);
       return () => socket.off && socket.off('thread_updated', callback);
     }, [socket]),
+
+    onReactionUpdated: useCallback((callback: (data: { messageId: string; reactions: any[] }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('reaction_updated', callback);
+      return () => socket.off && socket.off('reaction_updated', callback);
+    }, [socket]),
   }
 }

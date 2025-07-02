@@ -29,6 +29,7 @@ model User {
   receivedMessages       Message[]       @relation("MessageRecipient")
   notifications          Notification[]  @relation("UserNotifications") // Notifications received by this user
   triggeredNotifications Notification[]  @relation("UserTriggeredNotifications") // Notifications sent by this user
+  reactions              Reaction[]      // Reactions made by this user
 
   @@map("users")
 }
@@ -126,9 +127,24 @@ model Message {
   threadId      String?    // ID of the root message of the thread. Indexed for faster thread fetching.
   replyCount    Int        @default(0)
   lastReplyAt   DateTime?  // Timestamp of the last reply in the thread, for sorting threads.
+  reactions     Reaction[] // Reactions on this message
 
   @@index([threadId, createdAt]) // To fetch all messages in a thread and sort them
   @@map("messages")
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  emoji     String   // e.g., "👍", ":+1:", "thumbsup_alias"
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([emoji, messageId, userId]) // User can only react with the same emoji once per message
+  @@map("reactions")
 }
 
 model Notification {

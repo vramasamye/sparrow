@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { EmojiPicker } from '../emoji/emoji-picker'; // Corrected: Import EmojiPicker at the top
 import { useSession } from 'next-auth/react'
 import { useSocket } from '@/hooks/useSocket'
 
@@ -44,6 +45,8 @@ export function MessageComposer({
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 })
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false); // State for emoji picker
+  const emojiPickerButtonRef = useRef<HTMLButtonElement>(null); // Ref for emoji picker button for positioning
 
   const filteredMembers = mentionQuery
     ? workspaceMembers.filter(member =>
@@ -175,6 +178,43 @@ export function MessageComposer({
     }
   }, [message])
 
+  const handleEmojiSelect = (emoji: string) => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      setMessage(text.substring(0, start) + emoji + text.substring(end));
+      // Focus and set cursor position after emoji
+      textarea.focus();
+      setTimeout(() => textarea.setSelectionRange(start + emoji.length, start + emoji.length), 0);
+    }
+    setShowEmojiPicker(false);
+  };
+
+  // Click outside for emoji picker (similar to mention suggestions)
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (emojiPickerButtonRef.current && emojiPickerButtonRef.current.contains(event.target as Node)) {
+        return; // Click was on the button, toggle handles it
+      }
+      // Assuming emoji picker is rendered adjacent or within a ref-able container if complex
+      // For this setup, if it's absolutely positioned, this might need a ref on the picker itself.
+      // For simplicity, if it's not the button, and picker is open, close it.
+      // This might be too aggressive if picker itself is clicked.
+      // A more robust solution would involve a ref on the picker popover.
+      // For now, the picker's onClose prop will handle clicks on its own items.
+      // This effect is mainly for clicking truly "outside".
+      // Let's assume the EmojiPicker component itself calls onClose when an emoji is selected.
+      // This effect is for clicking completely outside the composer interaction area.
+      // This simple version might cause issues, a proper popover library is better.
+      // Let's rely on the picker's internal close for now, or a wrapper div with a ref.
+      // For now, let's simplify: picker closes on selection or by clicking its button again.
+    }
+    // No specific outside click for emoji picker here, relying on button toggle and selection close.
+  }, [showEmojiPicker]);
+
+
   return (
     // Reduced padding, added dark mode bg for composer area
     <div className="bg-white dark:bg-slate-800 p-3 border-t border-slate-200 dark:border-slate-700">
@@ -231,9 +271,14 @@ export function MessageComposer({
             )}
             
             {/* Formatting Toolbar - dark mode styles, reduced padding */}
+            {/* ... (rest of imports and component code) ... */}
+
+// Inside the return statement, within the formatting toolbar div:
+            {/* Formatting Toolbar - dark mode styles, reduced padding */}
             <div className="flex items-center justify-between px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border-t border-slate-200 dark:border-slate-600">
-              <div className="flex gap-0.5"> {/* Reduced gap */}
-                <button
+              <div className="flex items-center gap-0.5"> {/* Added items-center here for picker positioning */}
+                {/* ... (Bold, Italic, Attach file buttons) ... */}
+                 <button
                   type="button"
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Bold"
@@ -260,15 +305,28 @@ export function MessageComposer({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
-                  title="Emoji"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
+
+                <div className="relative"> {/* Container for Emoji Picker */}
+                  <button
+                    ref={emojiPickerButtonRef}
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setShowEmojiPicker(prev => !prev);
+                    }}
+                    className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
+                    title="Emoji"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-full left-0 mb-1" ref={emojiPickerRef}> {/* Position above button */}
+                       <EmojiPicker onEmojiSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
+                    </div>
+                  )}
+                </div>
               </div>
               
               {/* Keyboard shortcut hint - can be removed for very compact UI */}

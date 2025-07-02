@@ -33,7 +33,8 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
     stopDmTyping,     // DM Typing
     onDmUserTyping,   // DM Typing
     onDmUserStopTyping,// DM Typing
-    onThreadUpdated   // New for threads
+    onThreadUpdated,   // New for threads
+    onReactionUpdated // New for reactions
   } = useSocket()
 
   const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
@@ -120,6 +121,30 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
       cleanupThreadUpdated();
     };
   }, [otherUser?.id, session?.user?.id, onThreadUpdated]);
+
+  // Listen for reaction updates for DMs
+  useEffect(() => {
+    if (!otherUser?.id || !onReactionUpdated || !session?.user?.id) return;
+
+    const cleanupReactionUpdated = onReactionUpdated((data) => {
+       // Check if the reaction update is relevant to the current DM
+      setMessages(prevMessages =>
+        prevMessages.map(msg => {
+          const isToCurrentUser = msg.recipientId === session.user.id && msg.userId === otherUser.id;
+          const isFromCurrentUser = msg.userId === session.user.id && msg.recipientId === otherUser.id;
+
+          if (msg.id === data.messageId && (isToCurrentUser || isFromCurrentUser)) {
+            return { ...msg, reactions: data.reactions }; // Assuming data.reactions is the raw list
+          }
+          return msg;
+        })
+      );
+    });
+    return () => {
+      cleanupReactionUpdated();
+    };
+  }, [otherUser?.id, session?.user?.id, onReactionUpdated]);
+
 
   // DM Typing Indicator Effects
   useEffect(() => {

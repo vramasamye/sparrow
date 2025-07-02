@@ -225,10 +225,11 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
         },
         include: {
           user: {
-            select: {
-              id: true,
-              username: true,
-              name: true
+            select: { id: true, username: true, name: true, avatar: true } // Added avatar
+          },
+          reactions: { // Include reactions
+            include: {
+              user: { select: { id: true, username: true, name: true } } // User who made the reaction
             }
           }
         },
@@ -413,12 +414,13 @@ router.get('/thread/:rootMessageId', async (req: AuthenticatedRequest, res) => {
       where: { id: rootMessageId },
       include: {
         user: { select: { id: true, username: true, name: true, avatar: true } },
-        channel: { select: { id: true, name: true, workspaceId: true } }, // For context and auth
-        // For DMs, recipient is on the message itself
-        // Include fields relevant for displaying the root message in a thread context
-        parentMessage: false, // Root message of a thread has no parent shown in its own thread view typically
-        replies: false,       // We fetch replies separately based on threadId
-        notifications: false, // Usually not needed for thread view content
+        channel: { select: { id: true, name: true, workspaceId: true } },
+        reactions: { // Include reactions for the root message
+          include: {
+            user: { select: { id: true, username: true, name: true } }
+          }
+        }
+        // parentMessage, replies, notifications are correctly set to false or not included
       }
     });
 
@@ -456,7 +458,12 @@ router.get('/thread/:rootMessageId', async (req: AuthenticatedRequest, res) => {
       },
       include: {
         user: { select: { id: true, username: true, name: true, avatar: true } },
-        // parentMessage: { select: { id: true, userId: true, user: {select: {username:true}}}}, // Optional: if replies can also have replies displayed flatly
+        reactions: { // Include reactions for each reply
+          include: {
+            user: { select: { id: true, username: true, name: true } }
+          }
+        }
+        // parentMessage: { select: { id: true, userId: true, user: {select: {username:true}}}},
       },
       orderBy: {
         createdAt: 'asc' // Replies should be in chronological order
@@ -470,5 +477,10 @@ router.get('/thread/:rootMessageId', async (req: AuthenticatedRequest, res) => {
     res.status(500).json({ error: 'Failed to fetch thread messages' });
   }
 });
+
+// Mount reaction routes nested under /:messageId/reactions
+import reactionRoutes from './reactions'; // Import here
+router.use('/:messageId/reactions', reactionRoutes);
+
 
 export default router
