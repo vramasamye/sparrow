@@ -282,48 +282,183 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     })
 
     // Handle new message
-    socket.on('send_message', async (data: { channelId?: string; recipientId?: string; content: string }) => {
+    socket.on('send_message', async (data: { channelId?: string; recipientId?: string; content: string; parentId?: string }) => { // Added parentId
       try {
-        const { channelId, recipientId, content } = data
-        const userId = socket.data.user.id
+        const { channelId, recipientId, content, parentId } = data; // Added parentId
+        const userId = socket.data.user.id;
+        const senderUser = socket.data.user;
 
         if (!content) {
-          socket.emit('error', { message: 'Message content is required' })
-          return
+          socket.emit('error', { message: 'Message content is required' });
+          return;
+        }
+        if (!channelId && !recipientId) {
+            socket.emit('error', { message: 'Message target (channelId or recipientId) is required.' });
+            return;
         }
 
-        let message
-        const senderUser = socket.data.user
+        let finalMessage: any;
 
-        if (channelId) {
-          // Channel message
-          const membership = await db.channelMember.findFirst({
-            where: { channelId, userId },
-          })
-          if (!membership) {
-            socket.emit('error', { message: 'Not authorized to send message to this channel' })
-            return
+        await db.$transaction(async (prisma) => {
+          let determinedThreadId: string | null = null;
+          const messageData: any = {
+            content,
+            userId,
+            channelId: channelId || null,
+            recipientId: recipientId || null,
+            parentId: parentId || null,
+            workspaceId: null,
+          };
+
+          if (channelId) {
+            const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+            if (!channel) throw new Error('Channel not found');
+            const membership = await prisma.channelMember.findFirst({ where: { channelId, userId } });
+            if (!membership) throw new Error('User not member of channel');
+            messageData.workspaceId = channel.workspaceId;
           }
 
-          const channel = await db.channel.findUnique({ where: { id: channelId } })
-          if (!channel) {
-            socket.emit('error', { message: 'Channel not found' })
-            return
+          if (parentId) {
+            const parentMsg = await prisma.message.findUnique({ where: { id: parentId } });
+            if (!parentMsg) throw new Error('Parent message not found');
+            determinedThreadId = parentMsg.threadId || parentMsg.id;
+            messageData.threadId = determinedThreadId;
+
+            await prisma.message.update({
+              where: { id: parentId },
+              data: { replyCount: { increment: 1 }, lastReplyAt: new Date() },
+            });
+            if (!parentMsg.threadId) { // Ensure root parent has threadId set
+                await prisma.message.update({ where: {id: parentMsg.id}, data: {threadId: parentMsg.id}});
+            }
+            if (determinedThreadId) { // Update root of thread
+              await prisma.message.update({
+                where: { id: determinedThreadId },
+                data: { replyCount: { increment: 1 }, lastReplyAt: new Date() },
+              });
+            }
           }
 
-          // 1. Create message
-          let createdMessage = await db.message.create({
-            data: {
-              content,
-              userId,
-              channelId,
-              workspaceId: channel.workspaceId,
-            },
+          let createdMessage = await prisma.message.create({
+            data: messageData,
             include: { user: { select: { id: true, username: true, name: true } } },
-          })
+          });
 
-          // 2. Handle mentions and notifications
-          const { mentionedUserIds } = await handleMentionsAndNotificationsSocket(
+          if (!parentId) {
+            createdMessage = await prisma.message.update({
+              where: { id: createdMessage.id },
+              data: { threadId: createdMessage.id },
+              include: { user: { select: { id: true, username: true, name: true } } },
+            });
+          }
+
+          finalMessage = createdMessage; // Store for use after transaction
+
+          // Handle mentions
+          if (finalMessage.channelId) {
+            const { mentionedUserIds } = await handleMentionsAndNotificationsSocket(
+              io, app, finalMessage, userId, finalMessage.workspaceId, finalMessage.channelId
+            );
+            if (mentionedUserIds.length > 0) {
+              finalMessage = await prisma.message.update({
+                where: { id: finalMessage.id },
+                data: { mentionedUserIds: mentionedUserIds.join(',') },
+                include: { user: { select: { id: true, username: true, name: true } } },
+              });
+            }
+          }
+
+          // DM notifications
+          if (finalMessage.recipientId && userId !== finalMessage.recipientId) {
+            const notification = await prisma.notification.create({
+              data: {
+                userId: finalMessage.recipientId, type: 'new_dm', messageId: finalMessage.id, senderId: userId,
+              },
+              include: {
+                sender: { select: { id: true, username: true, name: true } },
+                message: { select: { id: true, content: true, channelId: true, recipientId: true } },
+              },
+            });
+            const recipientSocketId = userSocketsMap?.get(finalMessage.recipientId);
+            if (recipientSocketId) {
+              io.to(recipientSocketId).emit('new_notification', notification);
+            }
+          }
+        }); // End transaction
+
+        // Refetch the message with full details for broadcasting
+        finalMessage = await db.message.findUnique({
+            where: { id: finalMessage.id },
+            include: {
+                user: { select: { id: true, username: true, name: true, avatar: true } },
+                parentMessage: { select: { id: true, userId: true, content: true, user: {select: {id: true, username: true, name: true}}}},
+            }
+        });
+
+
+        if (finalMessage.channelId) {
+          io.to(`channel:${finalMessage.channelId}`).emit('new_message', finalMessage);
+        } else if (finalMessage.recipientId) {
+          const messageDataForDM: MessageData = {
+            id: finalMessage.id,
+            content: finalMessage.content,
+            userId: finalMessage.userId,
+            recipientId: finalMessage.recipientId,
+            createdAt: finalMessage.createdAt.toISOString(),
+            user: finalMessage.user,
+            parentId: finalMessage.parentId,
+            threadId: finalMessage.threadId,
+            replyCount: finalMessage.replyCount,
+            lastReplyAt: finalMessage.lastReplyAt?.toISOString(), // Add lastReplyAt
+          };
+          socket.emit('new_direct_message', messageDataForDM); // To sender
+          const recipientSocketId = userSocketsMap?.get(finalMessage.recipientId);
+          if (recipientSocketId) {
+            io.to(recipientSocketId).emit('new_direct_message', messageDataForDM); // To recipient
+          }
+        }
+
+        // Emit thread_updated event if it was a reply
+        if (finalMessage.parentId && finalMessage.threadId) {
+            const rootMessageOfThread = await db.message.findUnique({
+                where: { id: finalMessage.threadId },
+                select: { replyCount: true, lastReplyAt: true, channelId: true, recipientId: true, userId: true }
+            });
+
+            if (rootMessageOfThread) {
+                const threadUpdatePayload = {
+                    rootMessageId: finalMessage.threadId,
+                    replyCount: rootMessageOfThread.replyCount,
+                    lastReplyAt: rootMessageOfThread.lastReplyAt?.toISOString(),
+                    latestReply: finalMessage // Send the full new message as the latest reply
+                };
+
+                if (rootMessageOfThread.channelId) {
+                    io.to(`channel:${rootMessageOfThread.channelId}`).emit('thread_updated', threadUpdatePayload);
+                } else if (rootMessageOfThread.recipientId) {
+                    // Emit to both participants of the DM thread
+                    const user1Socket = userSocketsMap?.get(rootMessageOfThread.userId);
+                    const user2Socket = userSocketsMap?.get(rootMessageOfThread.recipientId);
+                    if (user1Socket) io.to(user1Socket).emit('thread_updated', threadUpdatePayload);
+                    if (user2Socket && user1Socket !== user2Socket) io.to(user2Socket).emit('thread_updated', threadUpdatePayload);
+                }
+            }
+        }
+
+        logger.info(`Message sent by ${senderUser.username} to ${channelId ? `channel ${channelId}` : `user ${recipientId}`}${parentId ? ` as reply to ${parentId}` : ''}`);
+      } catch (error) {
+        logger.error('Send message error (socket):', error)
+        socket.emit('error', { message: 'Failed to send message: ' + (error as Error).message })
+      }
+    })
+
+    // Handle typing indicators for Channels
+    socket.on('start_typing', async (data: { channelId: string }) => {
+      try {
+        const { channelId } = data
+        const currentUser = socket.data.user;
+
+        // Verify user is member of channel
             io,
             app, // Pass app
             createdMessage,

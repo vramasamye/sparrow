@@ -56,7 +56,7 @@ async function handleMentionsAndNotifications(message: any, senderId: string, wo
 // Send message to channel
 router.post('/', async (req: AuthenticatedRequest, res) => {
   try {
-    const { content, channelId, recipientId } = req.body
+    const { content, channelId, recipientId, parentId } = req.body // Added parentId
     const userId = req.user!.id
 
     if (!content) {
@@ -67,78 +67,128 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
       return res.status(400).json({ error: 'Either channelId or recipientId is required' })
     }
 
-    let message
+    let createdMessage: any; // To store the final created message with all relations
 
-    if (channelId) {
-      // Channel message
-      const membership = await db.channelMember.findFirst({
-        where: { channelId, userId },
-      })
-      if (!membership) {
-        return res.status(403).json({ error: 'You are not a member of this channel' })
-      }
+    // Use a transaction to handle message creation and potential parent/thread updates
+    await db.$transaction(async (prisma) => {
+      let determinedThreadId: string | null = null;
 
-      const channel = await db.channel.findUnique({ where: { id: channelId } })
-      if (!channel) {
-        return res.status(404).json({ error: 'Channel not found' })
-      }
-
-      // 1. Create the message first (without mentionedUserIds initially)
-      message = await db.message.create({
-        data: {
-          content,
-          userId,
-          channelId,
-          workspaceId: channel.workspaceId,
-          // mentionedUserIds will be updated after parsing
-        },
-        include: { user: { select: { id: true, username: true, name: true } } },
-      })
-
-      // 2. Handle mentions and create notifications using the created message
-      const { mentionedUserIds } = await handleMentionsAndNotifications(
-        message, // Pass the full message object
+      // 1. Initial message data
+      const messageData: any = {
+        content,
         userId,
-        channel.workspaceId,
-        channelId
-      )
+        channelId: channelId || null,
+        recipientId: recipientId || null,
+        parentId: parentId || null,
+        workspaceId: null, // Will be set for channel messages
+      };
 
-      // 3. Update the message with mentionedUserIds
-      if (mentionedUserIds.length > 0) {
-        message = await db.message.update({
-          where: { id: message.id },
-          data: { mentionedUserIds: mentionedUserIds.join(',') },
-          include: { user: { select: { id: true, username: true, name: true } } },
-        })
+      if (channelId) {
+        const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+        if (!channel) throw new Error('Channel not found');
+        const membership = await prisma.channelMember.findFirst({ where: { channelId, userId } });
+        if (!membership) throw new Error('User not member of channel');
+        messageData.workspaceId = channel.workspaceId;
       }
 
-    } else if (recipientId) {
-      // Direct message
-      message = await db.message.create({
-        data: { content, userId, recipientId },
-        include: { user: { select: { id: true, username: true, name: true } } },
-      })
+      // Handle threading logic if parentId is provided
+      if (parentId) {
+        const parentMsg = await prisma.message.findUnique({ where: { id: parentId } });
+        if (!parentMsg) throw new Error('Parent message not found');
 
-      // Create notification for direct message
-      if (userId !== recipientId) { // Don't notify self
-        await db.notification.create({
+        determinedThreadId = parentMsg.threadId || parentMsg.id; // If parent is root, its id is threadId
+        messageData.threadId = determinedThreadId;
+
+        // Update parent message's reply count
+        await prisma.message.update({
+          where: { id: parentId },
+          data: {
+            replyCount: { increment: 1 },
+            lastReplyAt: new Date(), // Also update lastReplyAt on direct parent
+           },
+        });
+
+        // If the parent message was the root of the thread, ensure its threadId is set
+        if (!parentMsg.threadId) {
+            await prisma.message.update({
+                where: {id: parentMsg.id},
+                data: { threadId: parentMsg.id }
+            })
+        }
+
+        // Update the root message of the thread
+        if (determinedThreadId) { // This will always be true if parentId is present
+          await prisma.message.update({
+            where: { id: determinedThreadId },
+            data: {
+                replyCount: { increment: 1 }, // Increment replyCount on the root of the thread
+                lastReplyAt: new Date()
+            },
+          });
+        }
+      }
+
+      // 2. Create the new message
+      const newMessage = await prisma.message.create({
+        data: messageData,
+        include: { user: { select: { id: true, username: true, name: true } } },
+      });
+
+      // If it's a new top-level message, set its threadId to its own id
+      if (!parentId) {
+        await prisma.message.update({
+          where: { id: newMessage.id },
+          data: { threadId: newMessage.id },
+        });
+        // Refresh newMessage object to include this threadId
+        createdMessage = { ...newMessage, threadId: newMessage.id };
+      } else {
+        createdMessage = newMessage;
+      }
+
+      // 3. Handle mentions (only for channel messages for now, or if DMs support workspace-wide mentions)
+      if (createdMessage.channelId) {
+        const { mentionedUserIds } = await handleMentionsAndNotifications(
+          createdMessage,
+          userId,
+          messageData.workspaceId,
+          createdMessage.channelId
+        );
+        if (mentionedUserIds.length > 0) {
+          createdMessage = await prisma.message.update({ // Use prisma from transaction
+            where: { id: createdMessage.id },
+            data: { mentionedUserIds: mentionedUserIds.join(',') },
+            include: { user: { select: { id: true, username: true, name: true } } },
+          });
+        }
+      }
+
+      // 4. Create notification for direct message
+      if (recipientId && userId !== recipientId) {
+        await prisma.notification.create({
           data: {
             userId: recipientId,
             type: 'new_dm',
-            messageId: message.id,
+            messageId: createdMessage.id,
             senderId: userId,
           },
-        })
-        // TODO: Emit socket event for new_dm notification to recipient in socketHandler
+        });
       }
-    } else {
-      // This case should already be caught by the initial check
-      return res.status(400).json({ error: 'Message target (channelId or recipientId) not specified.' })
-    }
+    }); // End of transaction
 
-    logger.info(`Message sent by ${req.user!.username} to ${channelId ? 'channel ' + channelId : 'user ' + recipientId}`)
+    // Refetch the message outside transaction with all relations needed for response/socket
+    const finalMessage = await db.message.findUnique({
+        where: {id: createdMessage.id },
+        include: {
+            user: { select: { id: true, username: true, name: true, avatar: true } },
+            parentMessage: { select: { id: true, userId: true, content: true, user: {select: {id: true, username: true, name: true}}}}, // Include basic parent info
+            // replies: // Don't include all replies here, too heavy for single message response
+        }
+    })
 
-    res.status(201).json({ message })
+
+    logger.info(`Message sent by ${req.user!.username} to ${channelId ? 'channel ' + channelId : 'user ' + recipientId}${parentId ? ` as reply to ${parentId}` : ''}`);
+    res.status(201).json({ message: finalMessage });
   } catch (error) {
     logger.error('Send message error:', error)
     res.status(500).json({ error: 'Failed to send message' })
@@ -351,5 +401,74 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
     res.status(500).json({ error: 'Failed to update message' })
   }
 })
+
+// Get messages in a specific thread
+router.get('/thread/:rootMessageId', async (req: AuthenticatedRequest, res) => {
+  try {
+    const { rootMessageId } = req.params;
+    const userId = req.user!.id;
+
+    // 1. Fetch the root message to verify its existence and get context (channel/DM)
+    const rootMessage = await db.message.findUnique({
+      where: { id: rootMessageId },
+      include: {
+        user: { select: { id: true, username: true, name: true, avatar: true } },
+        channel: { select: { id: true, name: true, workspaceId: true } }, // For context and auth
+        // For DMs, recipient is on the message itself
+        // Include fields relevant for displaying the root message in a thread context
+        parentMessage: false, // Root message of a thread has no parent shown in its own thread view typically
+        replies: false,       // We fetch replies separately based on threadId
+        notifications: false, // Usually not needed for thread view content
+      }
+    });
+
+    if (!rootMessage) {
+      return res.status(404).json({ error: 'Thread root message not found' });
+    }
+
+    // 2. Authorization Check: Ensure the current user can view this thread.
+    // If it's a channel message, check channel membership.
+    // If it's a DM, check if the user is either the sender or recipient of the root message.
+    let authorized = false;
+    if (rootMessage.channelId) {
+      const membership = await db.channelMember.findFirst({
+        where: { channelId: rootMessage.channelId, userId }
+      });
+      if (membership) authorized = true;
+    } else if (rootMessage.recipientId) { // DM thread
+      if (rootMessage.userId === userId || rootMessage.recipientId === userId) {
+        authorized = true;
+      }
+    } else {
+      // Should not happen if message is properly formed with either channelId or recipientId
+      return res.status(500).json({ error: 'Invalid root message context' });
+    }
+
+    if (!authorized) {
+      return res.status(403).json({ error: 'You are not authorized to view this thread' });
+    }
+
+    // 3. Fetch all messages belonging to this thread
+    const threadMessages = await db.message.findMany({
+      where: {
+        threadId: rootMessageId,
+        id: { not: rootMessageId } // Exclude the root message itself from this list, as we already have it
+      },
+      include: {
+        user: { select: { id: true, username: true, name: true, avatar: true } },
+        // parentMessage: { select: { id: true, userId: true, user: {select: {username:true}}}}, // Optional: if replies can also have replies displayed flatly
+      },
+      orderBy: {
+        createdAt: 'asc' // Replies should be in chronological order
+      }
+    });
+
+    res.json({ rootMessage, replies: threadMessages });
+
+  } catch (error) {
+    logger.error('Get thread messages error:', error);
+    res.status(500).json({ error: 'Failed to fetch thread messages' });
+  }
+});
 
 export default router

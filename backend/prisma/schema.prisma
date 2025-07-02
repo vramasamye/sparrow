@@ -118,6 +118,16 @@ model Message {
   mentionedUserIds String? // Comma-separated list of user IDs
   notifications    Notification[] @relation("MessageNotifications")
 
+  // Threading fields
+  parentId      String?
+  parentMessage Message?  @relation("ThreadReplies", fields: [parentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  replies       Message[] @relation("ThreadReplies")
+
+  threadId      String?    // ID of the root message of the thread. Indexed for faster thread fetching.
+  replyCount    Int        @default(0)
+  lastReplyAt   DateTime?  // Timestamp of the last reply in the thread, for sorting threads.
+
+  @@index([threadId, createdAt]) // To fetch all messages in a thread and sort them
   @@map("messages")
 }
 
