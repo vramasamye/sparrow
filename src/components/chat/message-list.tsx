@@ -44,9 +44,8 @@ import { EmojiPicker } from '../emoji/emoji-picker'; // Import EmojiPicker
 
 import { marked } from 'marked'; // Import marked
 import DOMPurify from 'dompurify'; // Import DOMPurify
-import { useSession } from 'next-auth/react';
-import { useState, useRef, useEffect } from 'react'; // Added useEffect here
-import { EmojiPicker } from '../emoji/emoji-picker';
+// useSession, useState, useRef, useEffect are already imported above or via React default
+// No need for duplicate imports here
 
 // ... (interfaces Message, ReactionUser, Reaction, MessageListProps)
 
@@ -58,10 +57,21 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
 
+  // State for message editing
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editedContent, setEditedContent] = useState<string>("");
+  const editInputRef = useRef<HTMLTextAreaElement>(null);
+
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
-        setShowEmojiPickerFor(null);
+        // Check if the click was on an edit button, if so, don't close emoji picker.
+        // This logic might need refinement if edit buttons are also within the picker's conceptual boundary.
+        const targetElement = event.target as HTMLElement;
+        if (!targetElement.closest('[title="Edit message"]')) {
+          setShowEmojiPickerFor(null);
+        }
       }
     }
     if (showEmojiPickerFor) {
@@ -71,6 +81,84 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showEmojiPickerFor]);
+
+  const startEditHandler = (messageToEdit: Message) => {
+    setEditingMessageId(messageToEdit.id);
+    setEditedContent(messageToEdit.content);
+    setShowEmojiPickerFor(null); // Close emoji picker if open
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditedContent("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingMessageId || !session) return;
+    const token = localStorage.getItem('token') || session.accessToken;
+
+    try {
+      const response = await fetch(`/api/messages/${editingMessageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: editedContent }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        console.error("API Error saving edit:", errData.error);
+        alert(`Error: ${errData.error || 'Failed to save message edit'}`); // Basic error feedback
+        // Optionally, don't close edit mode on API error, allow retry.
+        return;
+      }
+      // Success: UI will update via socket event 'message_updated' from backend broadcast
+      setEditingMessageId(null);
+      setEditedContent("");
+    } catch (error) {
+      console.error("Failed to save message edit:", error);
+      alert("An unexpected error occurred while saving.");
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!session) return;
+    if (!window.confirm("Are you sure you want to delete this message? This action cannot be undone.")) {
+      return;
+    }
+
+    const token = localStorage.getItem('token') || session.accessToken;
+    try {
+      const response = await fetch(`/api/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        console.error("API Error deleting message:", errData.error);
+        alert(`Error: ${errData.error || 'Failed to delete message'}`);
+        return;
+      }
+      // Success: UI will update via socket event 'message_deleted' from backend broadcast
+      // No local state change needed here for deletion, rely on socket.
+    } catch (error) {
+      console.error("Failed to delete message:", error);
+      alert("An unexpected error occurred while deleting the message.");
+    }
+  };
+
+  // Auto-focus and select text (or move cursor to end) when editing starts
+  useEffect(() => {
+    if (editingMessageId && editInputRef.current) {
+      editInputRef.current.focus();
+      // Move cursor to end of text instead of selecting all
+      const len = editInputRef.current.value.length;
+      editInputRef.current.setSelectionRange(len, len);
+    }
+  }, [editingMessageId]);
 
 
   const handleAddReaction = (messageId: string, emoji: string) => {
@@ -222,18 +310,54 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
                   </span>
                   <span className="text-xs text-slate-400 dark:text-slate-500"> {/* Always visible, dark mode text */}
                     {formatTime(message.createdAt)}
+                    {message.updatedAt && new Date(message.updatedAt).getTime() - new Date(message.createdAt).getTime() > 1000 * 5 && ( // Show if updated > 5s after created
+                      <span className="ml-1 text-slate-400 dark:text-slate-500">(edited)</span>
+                    )}
                   </span>
                 </div>
                 
-                {/* Adjusted leading, dark mode text, and use dangerouslySetInnerHTML */}
-                <div
-                  className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words leading-normal text-sm prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-blockquote:my-1"
-                  dangerouslySetInnerHTML={renderMessageContent(message.content)}
-                />
-                {/* Added Tailwind Typography classes for basic Markdown styling:
-                    prose prose-sm dark:prose-invert max-w-none
-                    prose-p:my-1 etc. to reduce default prose margins for chat context
-                */}
+                {editingMessageId === message.id ? (
+                  <div className="mt-1">
+                    <textarea
+                      ref={editInputRef}
+                      value={editedContent}
+                      onChange={(e) => setEditedContent(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSaveEdit();
+                        } else if (e.key === 'Escape') {
+                          handleCancelEdit();
+                        }
+                      }}
+                      className="w-full p-2 border border-slate-300 dark:border-slate-600 rounded-md text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:ring-indigo-500 focus:border-indigo-500"
+                      rows={Math.max(2, editedContent.split('\n').length)} // Auto-adjust rows based on content
+                    />
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <button
+                        onClick={handleCancelEdit}
+                        className="px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveEdit}
+                        className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-md"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words leading-normal text-sm prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-blockquote:my-1"
+                    dangerouslySetInnerHTML={renderMessageContent(message.content)}
+                  />
+                  /* Added Tailwind Typography classes for basic Markdown styling:
+                      prose prose-sm dark:prose-invert max-w-none
+                      prose-p:my-1 etc. to reduce default prose margins for chat context
+                  */
+                )}
 
                 {/* Thread indicator and replies link */}
                 {(message.replyCount ?? 0) > 0 && (
@@ -324,12 +448,33 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
                   onClick={() => onViewThread && onViewThread(message.threadId || message.id)}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded"
                 >
+                  {/* Reply Icon SVG */}
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
                 </button>
-                {/* Placeholder: More Actions Button */}
-                <button title="More actions" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
+                {message.user.id === currentUserId && (
+                  <>
+                    {/* Edit Message Button */}
+                    <button
+                      title="Edit message"
+                      onClick={() => startEditHandler(message)}
+                      className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    </button>
+                    {/* Delete Message Button */}
+                    <button
+                      title="Delete message"
+                      onClick={() => handleDeleteMessage(message.id)}
+                      className="p-1 text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-100 dark:hover:bg-red-700/50 rounded"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                  </>
+                )}
+                {/* Placeholder: More Actions Button (can be removed if Edit/Delete are primary) */}
+                {/* <button title="More actions" className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 rounded">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
-                </button>
+                </button> */}
               </div>
             </div>
           </div>
