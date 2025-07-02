@@ -214,6 +214,36 @@ export function MessageComposer({
     // No specific outside click for emoji picker here, relying on button toggle and selection close.
   }, [showEmojiPicker]);
 
+  const applyMarkdownFormatting = (prefix: string, suffix: string, placeholder: string = "text") => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = message;
+    let newText;
+    let newCursorPos;
+
+    if (start !== end) { // Text is selected
+      const selectedText = currentText.substring(start, end);
+      newText = `${currentText.substring(0, start)}${prefix}${selectedText}${suffix}${currentText.substring(end)}`;
+      newCursorPos = start + prefix.length + selectedText.length + suffix.length;
+    } else { // No text selected, insert placeholder
+      newText = `${currentText.substring(0, start)}${prefix}${placeholder}${suffix}${currentText.substring(start)}`;
+      newCursorPos = start + prefix.length + placeholder.length;
+    }
+
+    setMessage(newText);
+
+    // Focus and set cursor/selection position
+    textarea.focus();
+    if (start !== end) { // Text was selected, maintain selection on the original text part
+      setTimeout(() => textarea.setSelectionRange(start + prefix.length, start + prefix.length + selectedText.length), 0);
+    } else { // No text selected, select the placeholder
+      setTimeout(() => textarea.setSelectionRange(start + prefix.length, start + prefix.length + placeholder.length), 0);
+    }
+  };
+
 
   return (
     // Reduced padding, added dark mode bg for composer area
@@ -280,6 +310,7 @@ export function MessageComposer({
                 {/* ... (Bold, Italic, Attach file buttons) ... */}
                  <button
                   type="button"
+                  onClick={() => applyMarkdownFormatting('**', '**', 'bold text')}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Bold"
                 >
@@ -289,6 +320,7 @@ export function MessageComposer({
                 </button>
                 <button
                   type="button"
+                  onClick={() => applyMarkdownFormatting('*', '*', 'italic text')}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Italic"
                 >
@@ -327,6 +359,25 @@ export function MessageComposer({
                     </div>
                   )}
                 </div>
+                {/* New Formatting Buttons with improved placeholder SVGs */}
+                <button type="button" onClick={() => applyMarkdownFormatting('~~', '~~', 'strikethrough')} title="Strikethrough" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16M9 4L15 20"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('`', '`', 'code')} title="Inline Code" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m-8 12h16"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('```\n', '\n```', 'code block')} title="Code Block" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('> ', '', 'quote')} title="Blockquote" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd"></path></svg>
+                </button>
+                 <button type="button" onClick={() => applyMarkdownFormatting('- ', '', 'item')} title="Unordered List" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd"></path></svg>
+                </button>
+                 <button type="button" onClick={() => applyMarkdownFormatting('1. ', '', 'item')} title="Ordered List" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M5.05 3.05a1 1 0 010 1.414L3.464 6H6a1 1 0 110 2H3.464l1.586 1.586A1 1 0 113.636 10.95L.323 7.636a1 1 0 010-1.272L3.636 3.05a1 1 0 011.414 0zM10 4a1 1 0 011-1h6a1 1 0 110 2h-6a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2h-6zm-1 4a1 1 0 011-1h6a1 1 0 110 2h-6a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2h-6z" clipRule="evenodd"></path></svg>
+                </button>
               </div>
               
               {/* Keyboard shortcut hint - can be removed for very compact UI */}

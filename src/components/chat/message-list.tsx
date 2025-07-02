@@ -42,42 +42,38 @@ import { useSession } from 'next-auth/react'; // Import useSession
 import { useState, useRef } from 'react'; // Import useState, useRef
 import { EmojiPicker } from '../emoji/emoji-picker'; // Import EmojiPicker
 
+import { marked } from 'marked'; // Import marked
+import DOMPurify from 'dompurify'; // Import DOMPurify
+import { useSession } from 'next-auth/react';
+import { useState, useRef, useEffect } from 'react'; // Added useEffect here
+import { EmojiPicker } from '../emoji/emoji-picker';
+
 // ... (interfaces Message, ReactionUser, Reaction, MessageListProps)
+
 
 export function MessageList({ messages, onViewThread }: MessageListProps) {
   const { data: session } = useSession();
   const currentUserId = session?.user?.id;
 
-  const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null); // message.id or null
-  const emojiPickerRef = useRef<HTMLDivElement>(null); // For click outside to close
+  const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      // Check if the click is outside the emoji picker and not on an "Add reaction" button
-      // (to prevent immediate closing if user clicks the same button to toggle)
-      // This specific button check might be too complex / fragile.
-      // A simpler version: if click is outside emojiPickerRef, close it.
-      // The button itself toggles based on `showEmojiPickerFor === message.id`.
       if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
-        // A more robust check would be to see if the target is part of any "add reaction" button.
-        // For now, this will close if you click anywhere else, which is generally fine.
-        // To prevent closing when clicking the trigger button, the button's onClick should handle the toggle logic correctly.
         setShowEmojiPickerFor(null);
       }
     }
-    if (showEmojiPickerFor) { // Only add listener if picker is shown
+    if (showEmojiPickerFor) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showEmojiPickerFor]); // Re-run when picker visibility changes
+  }, [showEmojiPickerFor]);
 
 
   const handleAddReaction = (messageId: string, emoji: string) => {
-    // Assuming user cannot add an emoji they've already reacted with via this picker path
-    // (i.e., picker is for adding new, distinct emoji reactions by the user)
-    // The handleReactionClick will manage adding it.
     const currentUserHasReactedWithThisEmoji = messages
       .find(m => m.id === messageId)?.reactions
       ?.some(r => r.emoji === emoji && r.userId === currentUserId);
@@ -85,23 +81,20 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
     if (!currentUserHasReactedWithThisEmoji) {
       handleReactionClick(messageId, emoji, false);
     }
-    setShowEmojiPickerFor(null); // Close picker after selection
+    setShowEmojiPickerFor(null);
   };
 
   const handleReactionClick = async (messageId: string, emoji: string, currentUserHasReacted: boolean) => {
     if (!session) return;
     const token = localStorage.getItem('token') || session.accessToken;
     const apiUrl = `/api/messages/${messageId}/reactions`;
-
     try {
       if (currentUserHasReacted) {
-        // Remove reaction
         await fetch(`${apiUrl}/${encodeURIComponent(emoji)}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` },
         });
       } else {
-        // Add reaction
         await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -111,32 +104,36 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
           body: JSON.stringify({ emoji }),
         });
       }
-      // After API call, expect a socket event 'reaction_updated' to refresh the reactions.
-      // No optimistic update here to keep it simpler and rely on socket for source of truth.
     } catch (error) {
       console.error("Failed to update reaction:", error);
     }
   };
 
+  // Configure marked (optional: override default options)
+  // e.g., marked.setOptions({ gfm: true, breaks: true, ... });
 
   const renderMessageContent = (content: string) => {
-    if (!content) return null;
-    const mentionRegex = /(@[\w.-]+)/g; // Regex to find @username patterns
-    const parts = content.split(mentionRegex);
+    if (!content) return { __html: '' }; // Return empty __html for safety
 
-    return parts.map((part, index) => {
-      if (mentionRegex.test(part)) {
-        // It's a mention
-        return (
-          <span key={index} className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline cursor-pointer">
-            {part}
-          </span>
-        );
-      }
-      // It's a normal text part
-      return part;
-    });
+    // First, handle @mentions by wrapping them in a custom element or a specific class
+    // that Markdown parsing won't mangle, or that we can style specially.
+    // For simplicity, we'll assume @mentions are part of the text that marked will process.
+    // If specific click handlers or rich UIs are needed for mentions, a more complex pre-processing is needed.
+    // The current regex approach for mentions within renderMessageContent won't work directly with dangerouslySetInnerHTML.
+    // The Markdown parser will handle the text content. We need to style mentions via CSS if possible,
+    // or enhance the Markdown parser/renderer.
+
+    // For now, let's parse the whole content as Markdown.
+    // Mentions like @username will be treated as plain text by `marked`.
+    // We can re-introduce specific mention styling later if needed by post-processing the HTML
+    // or by using a marked extension.
+
+    const rawHtml = marked.parse(content) as string;
+    const sanitizedHtml = typeof window !== 'undefined' ? DOMPurify.sanitize(rawHtml) : rawHtml; // Sanitize only on client-side
+
+    return { __html: sanitizedHtml };
   };
+
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString)
@@ -228,10 +225,15 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
                   </span>
                 </div>
                 
-                {/* Adjusted leading, dark mode text */}
-                <div className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words leading-normal text-sm">
-                  {renderMessageContent(message.content)}
-                </div>
+                {/* Adjusted leading, dark mode text, and use dangerouslySetInnerHTML */}
+                <div
+                  className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words leading-normal text-sm prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-blockquote:my-1"
+                  dangerouslySetInnerHTML={renderMessageContent(message.content)}
+                />
+                {/* Added Tailwind Typography classes for basic Markdown styling:
+                    prose prose-sm dark:prose-invert max-w-none
+                    prose-p:my-1 etc. to reduce default prose margins for chat context
+                */}
 
                 {/* Thread indicator and replies link */}
                 {(message.replyCount ?? 0) > 0 && (
