@@ -19,7 +19,7 @@ interface DirectMessageAreaProps {
 
 export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }: DirectMessageAreaProps) {
   const { data: session } = useSession()
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   // const [dmChannel, setDmChannel] = useState<any>(null) // Removed: DMs are not channels
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -32,10 +32,17 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
     startDmTyping,    // DM Typing
     stopDmTyping,     // DM Typing
     onDmUserTyping,   // DM Typing
-    onDmUserStopTyping// DM Typing
+    onDmUserStopTyping,// DM Typing
+    onThreadUpdated,   // New for threads
+    onReactionUpdated // New for reactions
   } = useSocket()
 
   const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null); // State for open thread
+
+  const handleViewThread = (messageId: string) => {
+    setOpenedThreadId(messageId);
+  };
 
   useEffect(() => {
     loadDirectMessages()
@@ -86,6 +93,58 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
       cleanupMessageDeleted();
     }
   }, [onNewDirectMessage, onMessageUpdated, onMessageDeleted, otherUser.id, session?.user?.id])
+
+  // Listen for thread updates to update reply counts/last reply time on root messages in DMs
+  useEffect(() => {
+    if (!otherUser?.id || !onThreadUpdated || !session?.user?.id) return;
+
+    const cleanupThreadUpdated = onThreadUpdated((data) => {
+      // Check if the thread update is relevant to the current DM
+      setMessages(prevMessages =>
+        prevMessages.map(msg => {
+          // A message is relevant if its ID is the rootMessageId, and it's part of this DM
+          const isToCurrentUser = msg.recipientId === session.user.id && msg.userId === otherUser.id;
+          const isFromCurrentUser = msg.userId === session.user.id && msg.recipientId === otherUser.id;
+
+          if (msg.id === data.rootMessageId && (isToCurrentUser || isFromCurrentUser)) {
+            return {
+              ...msg,
+              replyCount: data.replyCount,
+              lastReplyAt: data.lastReplyAt,
+            };
+          }
+          return msg;
+        })
+      );
+    });
+    return () => {
+      cleanupThreadUpdated();
+    };
+  }, [otherUser?.id, session?.user?.id, onThreadUpdated]);
+
+  // Listen for reaction updates for DMs
+  useEffect(() => {
+    if (!otherUser?.id || !onReactionUpdated || !session?.user?.id) return;
+
+    const cleanupReactionUpdated = onReactionUpdated((data) => {
+       // Check if the reaction update is relevant to the current DM
+      setMessages(prevMessages =>
+        prevMessages.map(msg => {
+          const isToCurrentUser = msg.recipientId === session.user.id && msg.userId === otherUser.id;
+          const isFromCurrentUser = msg.userId === session.user.id && msg.recipientId === otherUser.id;
+
+          if (msg.id === data.messageId && (isToCurrentUser || isFromCurrentUser)) {
+            return { ...msg, reactions: data.reactions }; // Assuming data.reactions is the raw list
+          }
+          return msg;
+        })
+      );
+    });
+    return () => {
+      cleanupReactionUpdated();
+    };
+  }, [otherUser?.id, session?.user?.id, onReactionUpdated]);
+
 
   // DM Typing Indicator Effects
   useEffect(() => {
@@ -190,10 +249,11 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* DM Header */}
-      {/* p-3 for compactness, dark mode styles, consistent with MessageArea header */}
-      <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
+    <div className="flex h-full"> {/* Ensure parent flex container */}
+      <div className="flex flex-col h-full flex-1"> {/* Main DM area */}
+        {/* DM Header */}
+        {/* p-3 for compactness, dark mode styles, consistent with MessageArea header */}
+        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0"> {/* gap-2.5 */}
             {/* Back button for mobile/responsive (optional, can be handled by parent layout) */}
@@ -275,7 +335,7 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
                 </div>
               </div>
             )}
-            <MessageList messages={messages} />
+            <MessageList messages={messages} onViewThread={handleViewThread} />
             <div ref={messagesEndRef} />
           </>
         )}
@@ -283,21 +343,35 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
 
       {/* Typing Indicator */}
       {isOtherUserTyping && (
-        <div className="px-4 pt-1 pb-2 text-xs text-slate-500 italic">
+        <div className="px-4 pt-1 pb-2 text-xs text-slate-500 dark:text-slate-400 italic">
           {otherUser.name || otherUser.username} is typing...
         </div>
       )}
 
       {/* Message Composer */}
-      <div className="bg-white border-t border-slate-200">
+      <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
         <MessageComposer 
-          onSendMessage={handleSendMessage}
+          onSendMessage={handleSendMessage} // This sends a main DM message
           placeholder={`Message ${otherUser.name || otherUser.username}`}
-          onStartTyping={() => startDmTyping(otherUser.id)}
-          onStopTyping={() => stopDmTyping(otherUser.id)}
-          workspaceMembers={workspaceMembers}
+          onStartTyping={() => startDmTyping(otherUser.id)} // DM typing
+          onStopTyping={() => stopDmTyping(otherUser.id)}   // DM typing
+          workspaceMembers={workspaceMembers} // For @mentions
         />
       </div>
     </div>
+
+    {/* Thread Panel for DMs */}
+    {openedThreadId && (
+      <ThreadPanel
+        rootMessageId={openedThreadId}
+        // workspaceId might not be directly applicable/available on `otherUser` easily here unless passed.
+        // For DMs, @mentions in threads might be simpler (no workspace context needed for suggestions if not implemented)
+        // or require workspaceMembers to be passed if suggestions are desired.
+        workspaceMembers={workspaceMembers}
+        currentUserId={session?.user?.id}
+        onClose={() => setOpenedThreadId(null)}
+      />
+    )}
+  </div> // This closes the main div className="flex h-full"
   )
 }

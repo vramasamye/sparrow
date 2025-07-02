@@ -103,16 +103,15 @@ export function useSocket() {
     }
   }, [socket, isConnected])
 
-  const sendMessage = useCallback((channelId: string, content: string) => {
+  const sendMessage = useCallback((channelId: string, content: string, parentId?: string, threadId?: string) => {
     if (socket && isConnected && socket.emit) {
-      // console.log('Sending message via socket:', { channelId, content })
-      socket.emit('send_message', { channelId, content })
+      socket.emit('send_message', { channelId, content, parentId, threadId })
     }
   }, [socket, isConnected])
 
-  const sendDirectMessage = useCallback((recipientId: string, content: string) => {
+  const sendDirectMessage = useCallback((recipientId: string, content: string, parentId?: string, threadId?: string) => {
     if (socket && isConnected && socket.emit) {
-      socket.emit('send_message', { recipientId, content })
+      socket.emit('send_message', { recipientId, content, parentId, threadId })
     }
   }, [socket, isConnected])
 
@@ -242,6 +241,18 @@ export function useSocket() {
       if (!socket || !socket.on) return () => {};
       socket.on('dm_user_stop_typing', callback);
       return () => socket.off && socket.off('dm_user_stop_typing', callback);
+    }, [socket]),
+
+    onThreadUpdated: useCallback((callback: (data: { rootMessageId: string; replyCount: number; lastReplyAt?: string; latestReply: any }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('thread_updated', callback);
+      return () => socket.off && socket.off('thread_updated', callback);
+    }, [socket]),
+
+    onReactionUpdated: useCallback((callback: (data: { messageId: string; reactions: any[] }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('reaction_updated', callback);
+      return () => socket.off && socket.off('reaction_updated', callback);
     }, [socket]),
   }
 }

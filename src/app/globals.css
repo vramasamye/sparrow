@@ -24,3 +24,35 @@ body {
   color: var(--foreground);
   /* font-family will be inherited from html/body via Tailwind's base styles or layout.tsx */
 }
+
+/* Custom Markdown Styles (to be used with Tailwind Typography's `prose`) */
+.prose code:not(pre code) { /* Inline code */
+  @apply bg-slate-100 dark:bg-slate-700 text-red-600 dark:text-red-400 font-mono text-xs px-1 py-0.5 rounded-sm;
+  word-wrap: break-word; /* Ensure long inline code wraps */
+}
+.prose code:not(pre code)::before,
+.prose code:not(pre code)::after {
+  content: ''; /* Remove default quotes around inline code from some prose styles */
+}
+
+.prose pre { /* Code blocks */
+  @apply bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-md text-xs p-3;
+  white-space: pre-wrap;       /* Allow wrapping within the pre block */
+  word-break: break-all;     /* Break long words/strings if they would overflow */
+}
+
+.prose pre code {
+  background-color: transparent !important; /* Remove bg from code inside pre, pre has it */
+  color: inherit !important; /* Inherit color from pre */
+  padding: 0 !important; /* Remove padding from code inside pre */
+  font-size: inherit !important; /* Inherit font size */
+}
+
+.prose blockquote {
+  @apply border-l-4 border-slate-300 dark:border-slate-600 pl-3 italic text-slate-600 dark:text-slate-400;
+}
+
+/* Ensure prose links are styled like app links if needed, or use default prose link style */
+.prose a {
+  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
+}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { EmojiPicker } from '../emoji/emoji-picker'; // Corrected: Import EmojiPicker at the top
 import { useSession } from 'next-auth/react'
 import { useSocket } from '@/hooks/useSocket'
 
@@ -44,6 +45,8 @@ export function MessageComposer({
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 })
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false); // State for emoji picker
+  const emojiPickerButtonRef = useRef<HTMLButtonElement>(null); // Ref for emoji picker button for positioning
 
   const filteredMembers = mentionQuery
     ? workspaceMembers.filter(member =>
@@ -175,6 +178,73 @@ export function MessageComposer({
     }
   }, [message])
 
+  const handleEmojiSelect = (emoji: string) => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      setMessage(text.substring(0, start) + emoji + text.substring(end));
+      // Focus and set cursor position after emoji
+      textarea.focus();
+      setTimeout(() => textarea.setSelectionRange(start + emoji.length, start + emoji.length), 0);
+    }
+    setShowEmojiPicker(false);
+  };
+
+  // Click outside for emoji picker (similar to mention suggestions)
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (emojiPickerButtonRef.current && emojiPickerButtonRef.current.contains(event.target as Node)) {
+        return; // Click was on the button, toggle handles it
+      }
+      // Assuming emoji picker is rendered adjacent or within a ref-able container if complex
+      // For this setup, if it's absolutely positioned, this might need a ref on the picker itself.
+      // For simplicity, if it's not the button, and picker is open, close it.
+      // This might be too aggressive if picker itself is clicked.
+      // A more robust solution would involve a ref on the picker popover.
+      // For now, the picker's onClose prop will handle clicks on its own items.
+      // This effect is mainly for clicking truly "outside".
+      // Let's assume the EmojiPicker component itself calls onClose when an emoji is selected.
+      // This effect is for clicking completely outside the composer interaction area.
+      // This simple version might cause issues, a proper popover library is better.
+      // Let's rely on the picker's internal close for now, or a wrapper div with a ref.
+      // For now, let's simplify: picker closes on selection or by clicking its button again.
+    }
+    // No specific outside click for emoji picker here, relying on button toggle and selection close.
+  }, [showEmojiPicker]);
+
+  const applyMarkdownFormatting = (prefix: string, suffix: string, placeholder: string = "text") => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = message;
+    let newText;
+    let newCursorPos;
+
+    if (start !== end) { // Text is selected
+      const selectedText = currentText.substring(start, end);
+      newText = `${currentText.substring(0, start)}${prefix}${selectedText}${suffix}${currentText.substring(end)}`;
+      newCursorPos = start + prefix.length + selectedText.length + suffix.length;
+    } else { // No text selected, insert placeholder
+      newText = `${currentText.substring(0, start)}${prefix}${placeholder}${suffix}${currentText.substring(start)}`;
+      newCursorPos = start + prefix.length + placeholder.length;
+    }
+
+    setMessage(newText);
+
+    // Focus and set cursor/selection position
+    textarea.focus();
+    if (start !== end) { // Text was selected, maintain selection on the original text part
+      setTimeout(() => textarea.setSelectionRange(start + prefix.length, start + prefix.length + selectedText.length), 0);
+    } else { // No text selected, select the placeholder
+      setTimeout(() => textarea.setSelectionRange(start + prefix.length, start + prefix.length + placeholder.length), 0);
+    }
+  };
+
+
   return (
     // Reduced padding, added dark mode bg for composer area
     <div className="bg-white dark:bg-slate-800 p-3 border-t border-slate-200 dark:border-slate-700">
@@ -231,10 +301,16 @@ export function MessageComposer({
             )}
             
             {/* Formatting Toolbar - dark mode styles, reduced padding */}
+            {/* ... (rest of imports and component code) ... */}
+
+// Inside the return statement, within the formatting toolbar div:
+            {/* Formatting Toolbar - dark mode styles, reduced padding */}
             <div className="flex items-center justify-between px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border-t border-slate-200 dark:border-slate-600">
-              <div className="flex gap-0.5"> {/* Reduced gap */}
-                <button
+              <div className="flex items-center gap-0.5"> {/* Added items-center here for picker positioning */}
+                {/* ... (Bold, Italic, Attach file buttons) ... */}
+                 <button
                   type="button"
+                  onClick={() => applyMarkdownFormatting('**', '**', 'bold text')}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Bold"
                 >
@@ -244,6 +320,7 @@ export function MessageComposer({
                 </button>
                 <button
                   type="button"
+                  onClick={() => applyMarkdownFormatting('*', '*', 'italic text')}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Italic"
                 >
@@ -260,14 +337,46 @@ export function MessageComposer({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
-                  title="Emoji"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+
+                <div className="relative"> {/* Container for Emoji Picker */}
+                  <button
+                    ref={emojiPickerButtonRef}
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setShowEmojiPicker(prev => !prev);
+                    }}
+                    className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
+                    title="Emoji"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-full left-0 mb-1" ref={emojiPickerRef}> {/* Position above button */}
+                       <EmojiPicker onEmojiSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
+                    </div>
+                  )}
+                </div>
+                {/* New Formatting Buttons with improved placeholder SVGs */}
+                <button type="button" onClick={() => applyMarkdownFormatting('~~', '~~', 'strikethrough')} title="Strikethrough" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16M9 4L15 20"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('`', '`', 'code')} title="Inline Code" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m-8 12h16"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('```\n', '\n```', 'code block')} title="Code Block" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                </button>
+                <button type="button" onClick={() => applyMarkdownFormatting('> ', '', 'quote')} title="Blockquote" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd"></path></svg>
+                </button>
+                 <button type="button" onClick={() => applyMarkdownFormatting('- ', '', 'item')} title="Unordered List" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd"></path></svg>
+                </button>
+                 <button type="button" onClick={() => applyMarkdownFormatting('1. ', '', 'item')} title="Ordered List" className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fillRule="evenodd" d="M5.05 3.05a1 1 0 010 1.414L3.464 6H6a1 1 0 110 2H3.464l1.586 1.586A1 1 0 113.636 10.95L.323 7.636a1 1 0 010-1.272L3.636 3.05a1 1 0 011.414 0zM10 4a1 1 0 011-1h6a1 1 0 110 2h-6a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2h-6zm-1 4a1 1 0 011-1h6a1 1 0 110 2h-6a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2h-6z" clipRule="evenodd"></path></svg>
                 </button>
               </div>
               

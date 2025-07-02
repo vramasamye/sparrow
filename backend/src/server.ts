@@ -19,6 +19,7 @@ import channelRoutes from './routes/channels'
 import messageRoutes from './routes/messages'
 import userRoutes from './routes/users'
 import notificationRoutes from './routes/notifications'
+import reactionRoutes from './routes/reactions' // Import reaction routes
 
 dotenv.config()
 
