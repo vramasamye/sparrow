@@ -299,15 +299,25 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
               </div>
             )}
             {/* Reduced overall padding from p-3 to p-2, hover bg changed */}
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+
+// ... (other imports and interfaces)
+
+// Inside MessageList component:
+            {/* Reduced overall padding from p-3 to p-2, hover bg changed */}
             <div className="flex gap-2.5 hover:bg-slate-100 dark:hover:bg-slate-700/50 p-2 rounded-lg transition-colors group relative">
               <div className="flex-shrink-0">
-                 {/* Reduced avatar size from w-10 h-10 to w-9 h-9 */}
                 {message.user.avatar ? (
-                  <img src={message.user.avatar} alt={message.user.name || message.user.username} className="w-9 h-9 rounded-md object-cover"/>
+                  <img
+                    src={getAvatarUrl(message.user.avatar)}
+                    alt={message.user.name || message.user.username}
+                    className="w-9 h-9 rounded-md object-cover"
+                    onError={(e) => (e.currentTarget.src = getAvatarUrl(null))} // Fallback to default on error
+                  />
                 ) : (
-                  <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-md flex items-center justify-center">
+                  <div className="w-9 h-9 bg-slate-600 dark:bg-slate-700 rounded-md flex items-center justify-center">
                     <span className="text-white text-xs font-semibold">
-                      {message.user.name?.[0]?.toUpperCase() || message.user.username[0]?.toUpperCase()}
+                      {getInitials(message.user.name, message.user.username)}
                     </span>
                   </div>
                 )}

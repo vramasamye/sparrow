@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { CreateChannelModal } from './create-channel-modal'
 import { InviteUserModal } from '../workspace/invite-user-modal'
 
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+
 interface SidebarProps {
   workspace: any
   currentChannel: any
@@ -176,12 +178,20 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                 }`}
               >
                 <div className="relative flex-shrink-0">
-                  {/* Basic avatar placeholder, replace with actual image if available */}
-                  <div className="w-6 h-6 bg-gradient-to-br from-sky-500 to-cyan-600 rounded-full flex items-center justify-center">
-                    <span className="text-white text-[10px] font-semibold">
-                      {convo.user.name?.[0]?.toUpperCase() || convo.user.username[0]?.toUpperCase()}
-                    </span>
-                  </div>
+                  {convo.user.avatar ? (
+                    <img
+                      src={getAvatarUrl(convo.user.avatar)}
+                      alt={convo.user.name || convo.user.username}
+                      className="w-6 h-6 rounded-full object-cover"
+                      onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+                    />
+                  ) : (
+                    <div className="w-6 h-6 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                      <span className="text-white text-[10px] font-semibold">
+                        {getInitials(convo.user.name, convo.user.username)}
+                      </span>
+                    </div>
+                  )}
                   {/* TODO: Add dynamic online status indicator */}
                   <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
                 </div>
@@ -236,11 +246,20 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
               className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-slate-100 group"
             >
               <div className="relative flex-shrink-0">
-                 <div className="w-6 h-6 bg-gradient-to-br from-slate-500 to-slate-600 rounded-full flex items-center justify-center"> {/* Consistent avatar size */}
-                  <span className="text-white text-[10px] font-semibold">
-                    {member.user.name?.[0]?.toUpperCase() || member.user.username[0]?.toUpperCase()}
-                  </span>
-                </div>
+                {member.user.avatar ? (
+                  <img
+                    src={getAvatarUrl(member.user.avatar)}
+                    alt={member.user.name || member.user.username}
+                    className="w-6 h-6 rounded-full object-cover"
+                    onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                    <span className="text-white text-[10px] font-semibold">
+                      {getInitials(member.user.name, member.user.username)}
+                    </span>
+                  </div>
+                )}
                 {/* TODO: Dynamic online status indicator */}
                 <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
               </div>

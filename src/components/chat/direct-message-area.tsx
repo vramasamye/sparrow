@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
 import { useSession } from 'next-auth/react'
 import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
@@ -256,6 +257,10 @@ export function DirectMessageArea({ otherUser, workspaceId, workspaceMembers = [
         {/* p-3 for compactness, dark mode styles, consistent with MessageArea header */}
         <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
         <div className="flex items-center justify-between">
+{/* No duplicate import needed here */}
+// ... (other imports and interfaces)
+
+// Inside DirectMessageArea component, in the header part:
           <div className="flex items-center gap-2.5 min-w-0"> {/* gap-2.5 */}
             {/* Back button for mobile/responsive (optional, can be handled by parent layout) */}
             {/* <button
@@ -267,11 +272,16 @@ export function DirectMessageArea({ otherUser, workspaceId, workspaceMembers = [
             </button> */}
             <div className="relative flex-shrink-0">
               {otherUser.avatar ? (
-                <img src={otherUser.avatar} alt={otherUser.name || otherUser.username} className="w-7 h-7 rounded-full object-cover" /> /* Smaller avatar */
+                  <img
+                    src={getAvatarUrl(otherUser.avatar)}
+                    alt={otherUser.name || otherUser.username}
+                    className="w-7 h-7 rounded-full object-cover"
+                    onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+                  />
               ) : (
-                <div className="w-7 h-7 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
-                  <span className="text-white text-[10px] font-semibold"> {/* Smaller text */}
-                    {otherUser.name?.[0]?.toUpperCase() || otherUser.username[0]?.toUpperCase()}
+                  <div className="w-7 h-7 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                    <span className="text-white text-[10px] font-semibold">
+                      {getInitials(otherUser.name, otherUser.username)}
                   </span>
                 </div>
               )}

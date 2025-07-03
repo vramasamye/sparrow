@@ -9,6 +9,8 @@ import { UserSearch } from './user-search'
 import { NotificationBell } from '../notifications/notification-bell'
 import { NotificationPanel } from '../notifications/notification-panel'
 import { useSocket } from '@/hooks/useSocket'
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+
 
 // Define Notification type structure - ideally import from a shared types file
 interface Notification {
@@ -321,12 +323,22 @@ export function ChatInterface({
         <div className="mt-auto p-4 border-t border-slate-700 bg-slate-800">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-teal-600 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-semibold">
-                  {session?.user?.name?.[0]?.toUpperCase() || session?.user?.username?.[0]?.toUpperCase() || 'U'}
-                </span>
-              </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-400 border-2 border-slate-800 rounded-full"></div>
+              {session?.user?.image ? ( // Assuming next-auth session.user.image might hold avatar URL
+                <img
+                  src={getAvatarUrl(session.user.image)}
+                  alt={session.user.name || session.user.username || "User"}
+                  className="w-10 h-10 rounded-full object-cover"
+                  onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+                />
+              ) : (
+                <div className="w-10 h-10 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-semibold">
+                    {getInitials(session?.user?.name, session?.user?.username)}
+                  </span>
+                </div>
+              )}
+              {/* TODO: Dynamic presence indicator based on socket connection or user status */}
+              <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-slate-800 rounded-full ${isConnected ? 'bg-green-400' : 'bg-slate-500'}`}></div>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate text-white">

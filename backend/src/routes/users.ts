@@ -97,6 +97,10 @@ router.get('/profile', async (req: AuthenticatedRequest, res) => {
         username: true,
         name: true,
         email: true,
+        avatar: true, // Ensure avatar is selected
+        bio: true,    // Add bio
+        jobTitle: true, // Add jobTitle
+        pronouns: true, // Add pronouns
         createdAt: true,
         members: {
           include: {
@@ -126,35 +130,74 @@ router.get('/profile', async (req: AuthenticatedRequest, res) => {
 router.put('/profile', async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user!.id
-    const { name, username } = req.body
+    const { name, username, bio, jobTitle, pronouns, avatar } = req.body // Added new fields
 
-    // Check if username is already taken (if provided)
-    if (username) {
-      const existingUser = await db.user.findFirst({
-        where: {
-          username,
-          NOT: {
-            id: userId
-          }
+    // Basic validation (example for bio length)
+    if (bio && bio.length > 500) { // Example length validation
+        return res.status(400).json({ error: 'Bio cannot exceed 500 characters.' });
+    }
+    if (jobTitle && jobTitle.length > 100) {
+        return res.status(400).json({ error: 'Job title cannot exceed 100 characters.' });
+    }
+    if (pronouns && pronouns.length > 50) {
+        return res.status(400).json({ error: 'Pronouns cannot exceed 50 characters.' });
+    }
+    // Avatar URL validation could be added (e.g. is valid URL format, or just accept string)
+
+    const updateData: any = {};
+
+    // Only add fields to updateData if they are explicitly provided in the request body
+    if (name !== undefined) updateData.name = name === "" ? null : name;
+    if (bio !== undefined) updateData.bio = bio === "" ? null : bio;
+    if (jobTitle !== undefined) updateData.jobTitle = jobTitle === "" ? null : jobTitle;
+    if (pronouns !== undefined) updateData.pronouns = pronouns === "" ? null : pronouns;
+    if (avatar !== undefined) updateData.avatar = avatar === "" ? null : avatar;
+
+    // Check if username is already taken (if provided and different from current)
+    if (username !== undefined) {
+      const currentUser = await db.user.findUnique({ where: { id: userId }, select: { username: true } });
+      if (!currentUser) return res.status(404).json({ error: 'User not found.' }); // Should not happen if authenticated
+
+      if (currentUser.username !== username) {
+        if (username === "") {
+            return res.status(400).json({ error: 'Username cannot be empty.'});
         }
-      })
-
-      if (existingUser) {
-        return res.status(409).json({ error: 'Username is already taken' })
+        const existingUserWithNewUsername = await db.user.findFirst({
+          where: {
+            username,
+            NOT: { id: userId }
+          }
+        });
+        if (existingUserWithNewUsername) {
+          return res.status(409).json({ error: 'Username is already taken' });
+        }
+        updateData.username = username;
       }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      // If only username was provided but it's the same as current, this would be empty.
+      // Return current user profile or a specific message.
+      const currentUserData = await db.user.findUnique({
+        where: {id: userId},
+        select: { id: true, username: true, name: true, email: true, avatar: true, bio: true, jobTitle: true, pronouns: true, createdAt: true }
+      });
+      return res.json({ user: currentUserData, message: "No changes detected or data provided." });
     }
 
     const updatedUser = await db.user.update({
       where: { id: userId },
-      data: {
-        ...(name && { name }),
-        ...(username && { username })
-      },
-      select: {
+      data: updateData,
+      select: { // Ensure all relevant fields are returned
         id: true,
         username: true,
         name: true,
-        email: true
+        email: true,
+        avatar: true,
+        bio: true,
+        jobTitle: true,
+        pronouns: true,
+        createdAt: true,
       }
     })
 

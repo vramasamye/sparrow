@@ -16,7 +16,10 @@ model User {
   username  String   @unique
   password  String
   name      String?
-  avatar    String?
+  avatar    String?    // URL to the avatar image
+  bio       String?    // For potentially longer text (SQLite TEXT type is default for String)
+  jobTitle  String?
+  pronouns  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
