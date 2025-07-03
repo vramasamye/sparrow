@@ -56,10 +56,10 @@ async function handleMentionsAndNotifications(message: any, senderId: string, wo
 // Send message to channel
 router.post('/', async (req: AuthenticatedRequest, res) => {
   try {
-    const { content, channelId, recipientId, parentId } = req.body // Added parentId
+    const { content, channelId, recipientId, parentId, attachmentIds } = req.body // Added attachmentIds
     const userId = req.user!.id
 
-    if (!content) {
+    if (!content && (!attachmentIds || attachmentIds.length === 0)) { // Message must have content or attachments
       return res.status(400).json({ error: 'Message content is required' })
     }
 
@@ -67,7 +67,8 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
       return res.status(400).json({ error: 'Either channelId or recipientId is required' })
     }
 
-    let createdMessage: any; // To store the final created message with all relations
+    let createdMessageInTransaction: any; // Temporary variable within transaction
+    let messageIdForRefetch: string | null = null;
 
     // Use a transaction to handle message creation and potential parent/thread updates
     await db.$transaction(async (prisma) => {
@@ -141,22 +142,22 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
           data: { threadId: newMessage.id },
         });
         // Refresh newMessage object to include this threadId
-        createdMessage = { ...newMessage, threadId: newMessage.id };
+        createdMessageInTransaction = { ...newMessage, threadId: newMessage.id };
       } else {
-        createdMessage = newMessage;
+        createdMessageInTransaction = newMessage;
       }
 
       // 3. Handle mentions (only for channel messages for now, or if DMs support workspace-wide mentions)
-      if (createdMessage.channelId) {
+      if (createdMessageInTransaction.channelId) {
         const { mentionedUserIds } = await handleMentionsAndNotifications(
-          createdMessage,
+          createdMessageInTransaction,
           userId,
           messageData.workspaceId,
-          createdMessage.channelId
+          createdMessageInTransaction.channelId
         );
         if (mentionedUserIds.length > 0) {
-          createdMessage = await prisma.message.update({ // Use prisma from transaction
-            where: { id: createdMessage.id },
+          createdMessageInTransaction = await prisma.message.update({ // Use prisma from transaction
+            where: { id: createdMessageInTransaction.id },
             data: { mentionedUserIds: mentionedUserIds.join(',') },
             include: { user: { select: { id: true, username: true, name: true } } },
           });
@@ -169,20 +170,56 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
           data: {
             userId: recipientId,
             type: 'new_dm',
-            messageId: createdMessage.id,
+            messageId: createdMessageInTransaction.id,
             senderId: userId,
           },
         });
       }
+
+      // 5. Link attachments if provided
+      if (attachmentIds && attachmentIds.length > 0) {
+        // Verify attachments exist, belong to the user, and are not already linked
+        const attachmentsToLink = await prisma.attachment.findMany({
+          where: {
+            id: { in: attachmentIds as string[] },
+            uploaderId: userId, // Ensure user owns the attachment
+            messageId: null,    // Ensure not already linked
+            // Optionally, check workspaceId if message is in a workspace-scoped channel
+            ...(messageData.workspaceId && { workspaceId: messageData.workspaceId }),
+          }
+        });
+
+        if (attachmentsToLink.length !== attachmentIds.length) {
+          // Some attachments were not found, or don't belong to user, or already linked
+          throw new Error('Invalid or already linked attachments provided.');
+        }
+
+        await prisma.attachment.updateMany({
+          where: {
+            id: { in: attachmentsToLink.map(att => att.id) }
+          },
+          data: {
+            messageId: createdMessageInTransaction.id
+          }
+        });
+      }
+      messageIdForRefetch = createdMessageInTransaction.id; // Set ID for refetching
+
     }); // End of transaction
+
+    if (!messageIdForRefetch) {
+      throw new Error("Message creation failed within transaction.");
+    }
 
     // Refetch the message outside transaction with all relations needed for response/socket
     const finalMessage = await db.message.findUnique({
-        where: {id: createdMessage.id },
+        where: {id: messageIdForRefetch },
         include: {
             user: { select: { id: true, username: true, name: true, avatar: true } },
-            parentMessage: { select: { id: true, userId: true, content: true, user: {select: {id: true, username: true, name: true}}}}, // Include basic parent info
-            // replies: // Don't include all replies here, too heavy for single message response
+            parentMessage: { select: { id: true, userId: true, content: true, user: {select: {id: true, username: true, name: true}}}},
+            attachments: { // Include attachments in the final response
+              orderBy: { createdAt: 'asc' }
+            }
         }
     })
 

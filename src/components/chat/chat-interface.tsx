@@ -348,7 +348,8 @@ export function ChatInterface({
         ) : currentDM ? (
           <DirectMessageArea 
             otherUser={currentDM} 
-            workspaceMembers={workspace?.members || []} // Pass workspaceMembers for @mention styling
+            workspaceId={workspace?.id} // Pass workspaceId
+            workspaceMembers={workspace?.members || []}
             onClose={() => setCurrentDM(null)}
           />
         ) : (

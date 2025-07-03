@@ -314,10 +314,11 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
       {/* Message Composer */}
       <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700"> {/* Dark mode for composer container */}
         <MessageComposer 
-          onSendMessage={handleSendMessage} // This sends a main channel message
+          onSendMessage={handleSendMessage}
           placeholder={`Message #${channel.name}`}
-          channelId={channel.id} // For channel typing indicators
-          workspaceMembers={workspaceMembers} // For @mentions
+          channelId={channel.id}
+          workspaceId={channel?.workspaceId} // Pass workspaceId
+          workspaceMembers={workspaceMembers}
         />
       </div>
     </div>

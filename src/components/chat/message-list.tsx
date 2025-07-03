@@ -15,7 +15,18 @@ interface Message {
   threadId?: string | null
   replyCount?: number
   lastReplyAt?: string | null // ISO string
-  reactions?: Reaction[] // Add reactions array
+  reactions?: Reaction[]
+  attachments?: Attachment[] // Add attachments array
+}
+
+interface Attachment {
+  id: string;
+  filename: string;
+  mimetype: string;
+  size: number;
+  url: string; // This will be the unique filename for local dev, or full URL in prod
+  createdAt: string;
+  // uploader?: { id: string; username: string; name?: string }; // If needed
 }
 
 interface ReactionUser {
@@ -25,11 +36,10 @@ interface ReactionUser {
 }
 
 interface Reaction {
-  id?: string; // ID might not be needed on client if not directly manipulating by Reaction ID
+  id?: string;
   emoji: string;
   userId: string;
-  user: ReactionUser; // User who made the reaction
-  // messageId and createdAt usually not needed for display on client message
+  user: ReactionUser;
 }
 
 
@@ -381,6 +391,40 @@ export function MessageList({ messages, onViewThread }: MessageListProps) {
                   </div>
                 )}
                  {/* The old message.replies block for inline display is removed in favor of thread panel */}
+
+                {/* Display Attachments */}
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {message.attachments.map(attachment => (
+                      <div key={attachment.id} className="p-2 border dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-700/30">
+                        {attachment.mimetype.startsWith('image/') ? (
+                          <img
+                            src={`/api/files/view/${attachment.url}`} // URL for local dev serving
+                            alt={attachment.filename}
+                            className="max-w-xs max-h-64 rounded-md object-contain" // Constrain size
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            {/* Generic File Icon (placeholder) */}
+                            <svg className="w-6 h-6 text-slate-500 dark:text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0011.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                            <div className="truncate">
+                              <a
+                                href={`/api/files/view/${attachment.url}?download=true`} // Add download query param
+                                download={attachment.filename}
+                                className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline font-medium truncate"
+                              >
+                                {attachment.filename}
+                              </a>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                {Math.round(attachment.size / 1024)} KB
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Display Reactions */}
                 {message.reactions && message.reactions.length > 0 && (

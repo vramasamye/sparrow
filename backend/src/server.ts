@@ -19,7 +19,8 @@ import channelRoutes from './routes/channels'
 import messageRoutes from './routes/messages'
 import userRoutes from './routes/users'
 import notificationRoutes from './routes/notifications'
-import reactionRoutes from './routes/reactions' // Import reaction routes
+import reactionRoutes from './routes/reactions'
+import fileRoutes from './routes/files' // Import file routes
 
 dotenv.config()
 
@@ -85,6 +86,7 @@ app.use('/api/channels', authMiddleware, channelRoutes)
 app.use('/api/messages', authMiddleware, messageRoutes)
 app.use('/api/users', authMiddleware, userRoutes)
 app.use('/api/notifications', authMiddleware, notificationRoutes)
+app.use('/api/workspaces/:workspaceId/files', authMiddleware, fileRoutes) // Mount file routes
 
 // Socket.io handling
 socketHandler(io, app) // Pass app to socketHandler

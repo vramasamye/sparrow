@@ -13,11 +13,12 @@ interface DirectMessageAreaProps {
     name?: string
     avatar?: string
   }
-  workspaceMembers?: any[] // Re-using WorkspaceMember type from MessageComposer context
+  workspaceId?: string; // Added workspaceId
+  workspaceMembers?: any[]
   onClose: () => void
 }
 
-export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }: DirectMessageAreaProps) {
+export function DirectMessageArea({ otherUser, workspaceId, workspaceMembers = [], onClose }: DirectMessageAreaProps) {
   const { data: session } = useSession()
   const [messages, setMessages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -353,9 +354,10 @@ export function DirectMessageArea({ otherUser, workspaceMembers = [], onClose }:
         <MessageComposer 
           onSendMessage={handleSendMessage} // This sends a main DM message
           placeholder={`Message ${otherUser.name || otherUser.username}`}
-          onStartTyping={() => startDmTyping(otherUser.id)} // DM typing
-          onStopTyping={() => stopDmTyping(otherUser.id)}   // DM typing
-          workspaceMembers={workspaceMembers} // For @mentions
+          onStartTyping={() => startDmTyping(otherUser.id)}
+          onStopTyping={() => stopDmTyping(otherUser.id)}
+          workspaceId={workspaceId} // Pass workspaceId
+          workspaceMembers={workspaceMembers}
         />
       </div>
     </div>
