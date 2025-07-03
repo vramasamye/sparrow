@@ -10,22 +10,25 @@ interface SidebarProps {
   workspace: any
   currentChannel: any
   currentDM: any // Added currentDM
-  unreadDmSenders: Set<string> // Added unreadDmSenders
+  unreadDmSenders: Set<string>
+  isCurrentUserAdmin?: boolean;
+  currentUserRole?: MemberRole | null; // New prop for current user's role
   onChannelSelect: (channel: any) => void
   onChannelCreated: (channel: any) => void
   onMemberInvited: (member: any) => void
   onDirectMessage: (user: any) => void
 }
 
-import { useEffect } from 'react'; // Added useEffect
-import { useSession } from 'next-auth/react'; // Added useSession
+import { useEffect } from 'react';
+import { useSession } from 'next-auth/react';
+import { MemberRole } from '@prisma/client'; // Import MemberRole for dropdown
 
 interface DMConversation {
   user: {
     id: string;
     username: string;
     name?: string;
-    avatar?: string; // Assuming avatar might be part of user object
+    avatar?: string;
   };
   lastMessage: {
     id: string;
@@ -74,6 +77,38 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
     // or by refetching when ChatInterface's currentDM changes.
   }, [session]);
 
+  const handleRoleChange = async (targetUserId: string, newRole: MemberRole) => {
+    if (!session || !workspace?.id || !isCurrentUserAdmin) return;
+
+    const token = localStorage.getItem('token') || session.accessToken;
+    try {
+      const response = await fetch(`/api/workspaces/${workspace.id}/members/${targetUserId}/role`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to update role");
+      }
+      // Success - ideally, workspace data should refresh to reflect the change.
+      // For now, an alert and then relying on a future full refresh or manual refresh.
+      alert(`Role for user ${targetUserId} updated to ${newRole}. Please refresh if not immediately visible.`);
+      // TODO: Implement a workspace data refresh mechanism instead of alert/reload
+      // e.g., call a prop like `onWorkspaceDataNeededRefresh()`
+      // Forcing a reload for now to see changes:
+      window.location.reload();
+
+    } catch (error: any) {
+      console.error("Failed to change role:", error);
+      alert(`Error changing role: ${error.message}`);
+    }
+  };
+
 
   const handleChannelCreated = (channel: any) => {
     onChannelCreated(channel)
@@ -96,15 +131,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             </svg>
             Channels
           </h3>
-          <button 
-            onClick={() => setShowCreateChannel(true)}
-            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
-            title="Create channel"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-          </button>
+          {currentUserRole && currentUserRole !== MemberRole.GUEST && (
+            <button
+              onClick={() => setShowCreateChannel(true)}
+              className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
+              title="Create channel"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </button>
+          )}
         </div>
         
         <div className="space-y-1">
@@ -227,15 +264,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             </svg>
             Team ({workspace?.members?.length || 0})
           </h3>
-          <button 
-            onClick={() => setShowInviteUser(true)}
-            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
-            title="Invite user"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-          </button>
+          {isCurrentUserAdmin && (
+            <button
+              onClick={() => setShowInviteUser(true)}
+              className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
+              title="Invite user"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </button>
+          )}
         </div>
         
         <div className="space-y-1">
@@ -266,12 +305,34 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
               <div className="flex-1 min-w-0 text-left">
                 <p className="truncate text-slate-200 group-hover:text-white">
                   {member.user.name || member.user.username}
+                    {member.userId === session?.user?.id && <span className="text-xs text-slate-500"> (You)</span>}
                 </p>
-                {/* Role can be removed for cleaner DM list, or kept if important for context */}
-                {/* <p className="text-xs text-slate-400 capitalize group-hover:text-slate-300">
-                  {member.role.toLowerCase()}
-                </p> */}
+                  <p className="text-xs text-slate-400 dark:text-slate-500 capitalize group-hover:text-slate-300">
+                    {member.role.toLowerCase()}
+                  </p>
               </div>
+                {isCurrentUserAdmin && member.userId !== workspace?.ownerId && member.userId !== session?.user?.id && (
+                  // Admins can change roles, but not for the owner or themselves via this simple UI
+                  // A more complex UI might allow self-demotion if not last admin.
+                  <div className="ml-auto pl-2 flex-shrink-0">
+                    <select
+                      value={member.role}
+                      onChange={(e) => handleRoleChange(member.userId, e.target.value as MemberRole)}
+                      onClick={(e) => e.stopPropagation()} // Prevent button click when changing select
+                      className="text-xs bg-slate-700 dark:bg-slate-600 text-slate-200 dark:text-slate-100 border-slate-600 dark:border-slate-500 rounded p-0.5 focus:ring-1 focus:ring-indigo-500"
+                      disabled={member.userId === workspace?.ownerId} // Extra safety: disable for owner
+                    >
+                      {Object.values(MemberRole).map((roleValue) => (
+                        <option key={roleValue} value={roleValue}>
+                          {roleValue.charAt(0).toUpperCase() + roleValue.slice(1).toLowerCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                 {isCurrentUserAdmin && member.userId === workspace?.ownerId && (
+                    <span className="ml-auto pl-2 text-xs text-amber-400 flex-shrink-0">Owner</span>
+                 )}
             </button>
           ))}
         </div>

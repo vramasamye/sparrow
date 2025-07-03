@@ -2,35 +2,29 @@ import { Router } from 'express'
 import { db } from '../services/database'
 import { AuthenticatedRequest } from '../types'
 import { logger } from '../utils/logger'
+import { roleCheckMiddleware } from '../middleware/auth' // Import
+import { MemberRole } from '@prisma/client' // Import
 
-const router = Router()
+const router = Router({ mergeParams: true }) // Enable mergeParams
 
-// Create channel
-router.post('/', async (req: AuthenticatedRequest, res) => {
+// Create channel - ADMIN or MEMBER
+router.post('/', roleCheckMiddleware([MemberRole.ADMIN, MemberRole.MEMBER]), async (req: AuthenticatedRequest, res) => {
   try {
-    const { name, description, isPrivate, workspaceId } = req.body
-    const userId = req.user!.id
+    const { name, description, isPrivate } = req.body;
+    const { workspaceId } = req.params; // Get workspaceId from route params
+    const userId = req.user!.id;
 
-    if (!name || !workspaceId) {
-      return res.status(400).json({ error: 'Channel name and workspace ID are required' })
+    if (!name) { // workspaceId is now from params, so only name needs validation from body
+      return res.status(400).json({ error: 'Channel name is required' });
     }
 
-    // Check if user is member of workspace
-    const membership = await db.member.findFirst({
-      where: {
-        workspaceId,
-        userId
-      }
-    })
-
-    if (!membership) {
-      return res.status(403).json({ error: 'You are not a member of this workspace' })
-    }
+    // User membership and role (ADMIN/MEMBER) already validated by authMiddleware & roleCheckMiddleware
+    // No need for: const membership = await db.member.findFirst(...)
 
     // Check if channel name already exists in workspace
     const existingChannel = await db.channel.findFirst({
       where: {
-        workspaceId,
+        workspaceId, // Use workspaceId from params
         name: name.toLowerCase()
       }
     })

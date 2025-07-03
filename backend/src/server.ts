@@ -82,8 +82,14 @@ app.set('userSockets', new Map<string, string>()); // Initialize userSockets map
 
 // API routes
 app.use('/api/auth', authRoutes)
-app.use('/api/workspaces', authMiddleware, workspaceRoutes)
-app.use('/api/channels', authMiddleware, channelRoutes)
+app.use('/api/workspaces', authMiddleware, workspaceRoutes) // This handles /api/workspaces and /api/workspaces/:workspaceId
+// Mount channelRoutes under /api/workspaces/:workspaceId/channels
+// Note: workspaceRoutes already handles /:workspaceId, so this needs to be integrated carefully OR
+// channelRoutes is mounted specifically.
+// For clarity, let's ensure workspaceRoutes does not also try to handle /:workspaceId/channels if we mount it separately.
+app.use('/api/workspaces/:workspaceId/channels', authMiddleware, channelRoutes); // New mount for channel routes
+// app.use('/api/channels', authMiddleware, channelRoutes) // Old one, to be removed or ensure it's gone
+
 app.use('/api/messages', authMiddleware, messageRoutes)
 app.use('/api/users', authMiddleware, userRoutes)
 app.use('/api/notifications', authMiddleware, notificationRoutes)

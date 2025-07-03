@@ -198,4 +198,5 @@ model Attachment {
 enum MemberRole {
   ADMIN
   MEMBER
+  GUEST
 }

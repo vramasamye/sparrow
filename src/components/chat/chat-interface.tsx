@@ -48,9 +48,14 @@ export function ChatInterface({
     joinWorkspace,
     isConnected,
     onNewNotification,
-    onUserJoinedChannel, // New
-    onUserLeftChannel   // New
+    onUserJoinedChannel,
+    onUserLeftChannel
   } = useSocket()
+
+  const currentUserMemberInfo = workspace?.members?.find((m: any) => m.userId === session?.user?.id);
+  const isCurrentUserAdmin = currentUserMemberInfo?.role === 'ADMIN';
+  const currentUserRole = currentUserMemberInfo?.role || null;
+
 
   // Fetch initial notifications and unread count
   const fetchInitialNotifications = async () => {
@@ -305,8 +310,10 @@ export function ChatInterface({
 +        <Sidebar
           workspace={workspace}
           currentChannel={currentChannel}
-          currentDM={currentDM} // Pass currentDM
-          unreadDmSenders={unreadDmSenders} // Pass unreadDmSenders
+          currentDM={currentDM}
+          unreadDmSenders={unreadDmSenders}
+          isCurrentUserAdmin={isCurrentUserAdmin}
+          currentUserRole={currentUserRole} // Pass current user's role
           onChannelSelect={handleChannelSelect}
           onChannelCreated={(channel) => {
             // Refresh workspace data or add channel to state
