@@ -170,43 +170,75 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     if (userSocketsMap) {
         userSocketsMap.set(socket.data.user.id, socket.id);
     }
+    // Update lastSeenAt on connection
+    db.user.update({
+        where: { id: socket.data.user.id },
+        data: { lastSeenAt: new Date() }
+    }).catch(err => logger.error(`Failed to update lastSeenAt for user ${socket.data.user.id} on connect:`, err));
+
 
     // Join workspace room
     socket.on('join_workspace', async (workspaceId: string) => {
       try {
-        // Verify user is member of workspace
+        const currentUser = socket.data.user;
         const membership = await db.member.findFirst({
-          where: {
-            workspaceId,
-            userId: socket.data.user.id
-          }
-        })
+          where: { workspaceId, userId: currentUser.id }
+        });
 
         if (!membership) {
-          socket.emit('error', { message: 'Not authorized to join this workspace' })
-          return
+          socket.emit('error', { message: 'Not authorized to join this workspace' });
+          return;
         }
 
-        socket.join(`workspace:${workspaceId}`)
+        socket.join(`workspace:${workspaceId}`);
         
-        // Update user's current workspace
-        const user = connectedUsers.get(socket.id)
-        if (user) {
-          user.workspaceId = workspaceId
-          connectedUsers.set(socket.id, user)
+        const userRecord = await db.user.findUnique({ // Fetch user for custom status
+            where: { id: currentUser.id },
+            select: { customStatusText: true, customStatusEmoji: true }
+        });
+
+        const connectedUserData = connectedUsers.get(socket.id);
+        if (connectedUserData) {
+          connectedUserData.workspaceId = workspaceId;
+          connectedUsers.set(socket.id, connectedUserData);
         }
 
         // Notify other users in workspace about user coming online
         socket.to(`workspace:${workspaceId}`).emit('user_online', {
-          userId: socket.data.user.id,
-          username: socket.data.user.username,
-          name: socket.data.user.name
-        })
+          userId: currentUser.id,
+          username: currentUser.username,
+          name: currentUser.name,
+          customStatusText: userRecord?.customStatusText,
+          customStatusEmoji: userRecord?.customStatusEmoji,
+        });
 
-        logger.info(`User ${socket.data.user.username} joined workspace ${workspaceId}`)
+        // Send current presence state of the workspace to the joining user
+        const workspaceUsersData: Array<{userId: string, username: string, name?: string | null, isOnline: boolean, customStatusText?: string | null, customStatusEmoji?: string | null, lastSeenAt?: string | null}> = [];
+        const membersOfWorkspace = await db.member.findMany({
+            where: { workspaceId },
+            include: { user: { select: { id: true, username: true, name: true, customStatusText: true, customStatusEmoji: true, lastSeenAt: true }}}
+        });
+
+        for (const member of membersOfWorkspace) {
+            if (member.userId !== currentUser.id) { // Don't send self-presence in initial dump
+                const isOnline = !!userSocketsMap?.has(member.userId); // Check if user has an active socket
+                workspaceUsersData.push({
+                    userId: member.userId,
+                    username: member.user.username,
+                    name: member.user.name,
+                    isOnline: isOnline,
+                    customStatusText: member.user.customStatusText,
+                    customStatusEmoji: member.user.customStatusEmoji,
+                    lastSeenAt: isOnline ? null : member.user.lastSeenAt?.toISOString() ?? null // Only send lastSeenAt if offline
+                });
+            }
+        }
+        socket.emit('workspace_presence_state', { workspaceId, users: workspaceUsersData });
+
+        logger.info(`User ${currentUser.username} joined workspace ${workspaceId}`);
       } catch (error) {
-        logger.error('Join workspace error:', error)
-        socket.emit('error', { message: 'Failed to join workspace' })
+        logger.error('Join workspace error:', error);
+        socket.emit('error', { message: 'Failed to join workspace' });
       }
     })
 
@@ -660,22 +692,42 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     });
 
     // Handle disconnect
-    socket.on('disconnect', () => {
-      logger.info(`User disconnected: ${socket.data.user.username} (${socket.id})`)
+    socket.on('disconnect', async () => { // Made async
+      const disconnectedUser = socket.data.user;
+      if (!disconnectedUser) return;
 
-      const user = connectedUsers.get(socket.id)
-      if (user && user.workspaceId) {
+      logger.info(`User disconnected: ${disconnectedUser.username} (${socket.id})`)
+
+      // Update lastSeenAt on disconnect
+      try {
+        await db.user.update({
+          where: { id: disconnectedUser.id },
+          data: { lastSeenAt: new Date() }
+        });
+      } catch (err) {
+        logger.error(`Failed to update lastSeenAt for user ${disconnectedUser.id} on disconnect:`, err);
+      }
+
+      const connectedUserData = connectedUsers.get(socket.id);
+      if (connectedUserData && connectedUserData.workspaceId) {
         // Notify other users in workspace about user going offline
-        socket.to(`workspace:${user.workspaceId}`).emit('user_offline', {
-          userId: user.id,
-          username: user.username
-        })
+        // Include custom status if available, as user_online does.
+        // However, custom status might not be relevant for "offline" as much,
+        // but sending it makes user_online/user_offline payloads more consistent.
+        // For offline, custom status might be implicitly cleared or ignored by client.
+        socket.to(`workspace:${connectedUserData.workspaceId}`).emit('user_offline', {
+          userId: disconnectedUser.id,
+          username: disconnectedUser.username,
+          name: disconnectedUser.name, // Assuming name is on disconnectedUser (socket.data.user)
+          // customStatusText: userRecord?.customStatusText, // Need to fetch or have it on socket.data.user
+          // customStatusEmoji: userRecord?.customStatusEmoji,
+        });
       }
 
       // Remove user from connected users
-      connectedUsers.delete(socket.id)
+      connectedUsers.delete(socket.id);
       if (userSocketsMap) {
-        userSocketsMap.delete(socket.data.user.id);
+        userSocketsMap.delete(disconnectedUser.id);
       }
     })
 

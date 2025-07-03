@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils';
 import { useSession } from 'next-auth/react'
 import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
 import { useSocket } from '@/hooks/useSocket'
+import { usePresence } from '@/contexts/PresenceContext'; // Import usePresence
 
 interface DirectMessageAreaProps {
   otherUser: {
@@ -23,6 +24,8 @@ export function DirectMessageArea({ otherUser, workspaceId, workspaceMembers = [
   const { data: session } = useSession()
   const [messages, setMessages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const { presences } = usePresence();
+  const otherUserPresence = presences.get(otherUser.id);
   // const [dmChannel, setDmChannel] = useState<any>(null) // Removed: DMs are not channels
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const {
@@ -278,24 +281,27 @@ export function DirectMessageArea({ otherUser, workspaceId, workspaceMembers = [
                     className="w-7 h-7 rounded-full object-cover"
                     onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
                   />
-              ) : (
+                ) : (
                   <div className="w-7 h-7 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
                     <span className="text-white text-[10px] font-semibold">
                       {getInitials(otherUser.name, otherUser.username)}
-                  </span>
-                </div>
-              )}
-              {/* TODO: Dynamic presence indicator */}
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-white dark:border-slate-800 rounded-full"></div>
-            </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate"> {/* text-sm */}
-                {otherUser.name || otherUser.username}
-              </h2>
-              {/* Username can be a secondary detail or hidden for more space */}
-              {/* <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                @{otherUser.username}
-              </p> */}
+                    </span>
+                  </div>
+                )}
+                <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 border border-white dark:border-slate-800 rounded-full ${otherUserPresence?.isOnline ? 'bg-green-400' : 'bg-slate-500'}`}></div>
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm truncate flex items-center">
+                  <span>{otherUser.name || otherUser.username}</span>
+                  {otherUserPresence?.customStatusEmoji && (
+                    <span className="ml-1.5 text-xs" title={otherUserPresence?.customStatusText || ''}>{otherUserPresence.customStatusEmoji}</span>
+                  )}
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate" title={otherUserPresence?.customStatusText || ''}>
+                  {otherUserPresence?.isOnline
+                    ? (otherUserPresence.customStatusText || 'Online')
+                    : (otherUserPresence?.lastSeenAt ? `Last seen ${new Date(otherUserPresence.lastSeenAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` : 'Offline')}
+                </p>
             </div>
           </div>
           

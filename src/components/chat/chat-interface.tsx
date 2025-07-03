@@ -9,7 +9,8 @@ import { UserSearch } from './user-search'
 import { NotificationBell } from '../notifications/notification-bell'
 import { NotificationPanel } from '../notifications/notification-panel'
 import { useSocket } from '@/hooks/useSocket'
-import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils';
+import { PresenceProvider } from '@/contexts/PresenceContext'; // Import PresenceProvider
 
 
 // Define Notification type structure - ideally import from a shared types file
@@ -52,11 +53,13 @@ export function ChatInterface({
     onNewNotification,
     onUserJoinedChannel,
     onUserLeftChannel
-  } = useSocket()
+  } = useSocket();
+  const { presences } = usePresence(); // Get presences from context
 
   const currentUserMemberInfo = workspace?.members?.find((m: any) => m.userId === session?.user?.id);
   const isCurrentUserAdmin = currentUserMemberInfo?.role === 'ADMIN';
   const currentUserRole = currentUserMemberInfo?.role || null;
+  const currentUserPresence = session?.user?.id ? presences.get(session.user.id) : null;
 
 
   // Fetch initial notifications and unread count
@@ -264,11 +267,12 @@ export function ChatInterface({
   }
 
   return (
-    <div className="flex h-screen bg-slate-900">
-      {/* Left Sidebar */}
-      <div className="w-72 bg-slate-900 text-white flex flex-col shadow-2xl">
-        {/* Workspace Header */}
-        <div className="p-4 border-b border-slate-700 bg-slate-800">
+    <PresenceProvider workspaceId={workspace?.id}>
+      <div className="flex h-screen bg-slate-900"> {/* This is the main app container for chat */}
+        {/* Left Sidebar */}
+        <div className="w-72 bg-slate-900 text-white flex flex-col shadow-2xl"> {/* Sidebar specific bg */}
+          {/* Workspace Header */}
+          <div className="p-4 border-b border-slate-700 bg-slate-800"> {/* Sidebar header specific bg */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
@@ -355,12 +359,21 @@ export function ChatInterface({
               <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-slate-800 rounded-full ${isConnected ? 'bg-green-400' : 'bg-slate-500'}`}></div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-white">
-                {session?.user?.name || session?.user?.username}
+              <p className="text-sm font-medium truncate text-white flex items-center">
+                <span>{session?.user?.name || session?.user?.username}</span>
+                {currentUserPresence?.customStatusEmoji && (
+                  <span className="ml-1.5 text-xs" title={currentUserPresence?.customStatusText || ''}>
+                    {currentUserPresence.customStatusEmoji}
+                  </span>
+                )}
               </p>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                <span className="text-xs text-slate-400">Online</span>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full ${ (isConnected && currentUserPresence?.isOnline) ? 'bg-green-400' : 'bg-slate-500'}`}></div>
+                <span className="text-xs text-slate-400 truncate" title={currentUserPresence?.customStatusText || ''}>
+                  {(isConnected && currentUserPresence?.isOnline)
+                    ? (currentUserPresence?.customStatusText || 'Online')
+                    : (currentUserPresence?.lastSeenAt ? `Last seen ${new Date(currentUserPresence.lastSeenAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` : 'Offline')}
+                </span>
               </div>
             </div>
           </div>
@@ -417,5 +430,6 @@ export function ChatInterface({
         // Pass session or token if NotificationPanel makes its own API calls
       />
     </div>
+  </PresenceProvider>
   )
 }

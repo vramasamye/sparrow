@@ -21,7 +21,8 @@ interface SidebarProps {
 
 import { useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { MemberRole } from '@prisma/client'; // Import MemberRole for dropdown
+import { MemberRole } from '@prisma/client';
+import { usePresence } from '@/contexts/PresenceContext'; // Import usePresence
 
 interface DMConversation {
   user: {
@@ -45,6 +46,7 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
   const [dmConversations, setDmConversations] = useState<DMConversation[]>([])
   const [loadingDMs, setLoadingDMs] = useState(true)
   const { data: session } = useSession()
+  const { presences } = usePresence();
 
 
   useEffect(() => {
@@ -229,12 +231,14 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                       </span>
                     </div>
                   )}
-                  {/* TODO: Add dynamic online status indicator */}
-                  <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 border border-slate-800 rounded-full ${presences.get(convo.user.id)?.isOnline ? 'bg-green-400' : 'bg-slate-500'}`}></div>
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <p className={`truncate ${ currentDM?.id === convo.user.id || unreadDmSenders.has(convo.user.id) ? 'text-white' : 'text-slate-200' } group-hover:text-white`}>
-                    {convo.user.name || convo.user.username}
+                  <p className={`truncate flex items-center ${ currentDM?.id === convo.user.id || unreadDmSenders.has(convo.user.id) ? 'text-white' : 'text-slate-200' } group-hover:text-white`}>
+                    <span>{convo.user.name || convo.user.username}</span>
+                    {presences.get(convo.user.id)?.customStatusEmoji && (
+                      <span className="ml-1.5 text-xs">{presences.get(convo.user.id)?.customStatusEmoji}</span>
+                    )}
                   </p>
                   {convo.lastMessage && (
                     <p className={`text-xs truncate ${currentDM?.id === convo.user.id ? 'text-slate-300' : 'text-slate-400'} group-hover:text-slate-300`}>
@@ -299,13 +303,15 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                     </span>
                   </div>
                 )}
-                {/* TODO: Dynamic online status indicator */}
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
+                <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 border border-slate-800 rounded-full ${presences.get(member.user.id)?.isOnline ? 'bg-green-400' : 'bg-slate-500'}`}></div>
               </div>
               <div className="flex-1 min-w-0 text-left">
-                <p className="truncate text-slate-200 group-hover:text-white">
-                  {member.user.name || member.user.username}
-                    {member.userId === session?.user?.id && <span className="text-xs text-slate-500"> (You)</span>}
+                <p className="truncate text-slate-200 group-hover:text-white flex items-center">
+                  <span>{member.user.name || member.user.username}</span>
+                  {presences.get(member.user.id)?.customStatusEmoji && (
+                      <span className="ml-1.5 text-xs">{presences.get(member.user.id)?.customStatusEmoji}</span>
+                  )}
+                  {member.userId === session?.user?.id && <span className="text-xs text-slate-500 ml-1"> (You)</span>}
                 </p>
                   <p className="text-xs text-slate-400 dark:text-slate-500 capitalize group-hover:text-slate-300">
                     {member.role.toLowerCase()}

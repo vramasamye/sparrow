@@ -20,6 +20,9 @@ model User {
   bio       String?    // For potentially longer text (SQLite TEXT type is default for String)
   jobTitle  String?
   pronouns  String?
+  lastSeenAt DateTime? // For presence: last time user was active or disconnected
+  customStatusText  String?
+  customStatusEmoji String? // e.g., "👍" or an emoji alias like ":coffee:"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

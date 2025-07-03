@@ -254,5 +254,19 @@ export function useSocket() {
       socket.on('reaction_updated', callback);
       return () => socket.off && socket.off('reaction_updated', callback);
     }, [socket]),
+
+    // For Presence and Custom Status
+    onUserStatusUpdated: useCallback((callback: (data: { userId: string; customStatusText?: string | null; customStatusEmoji?: string | null }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('user_status_updated', callback);
+      return () => socket.off && socket.off('user_status_updated', callback);
+    }, [socket]),
+
+    onWorkspacePresenceState: useCallback((callback: (data: { workspaceId: string, users: any[] }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('workspace_presence_state', callback);
+      return () => socket.off && socket.off('workspace_presence_state', callback);
+    }, [socket]),
+    // Note: onUserStatusChange (for online/offline) is already implemented
   }
 }
