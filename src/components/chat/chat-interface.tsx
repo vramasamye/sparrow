@@ -29,13 +29,15 @@ interface ChatInterfaceProps {
   workspaces: any[]
   onWorkspaceChange: (workspace: any) => void
   onCreateWorkspace: () => void
+  onRefreshWorkspaces?: () => void; // New prop
 }
 
 export function ChatInterface({ 
   workspace, 
   workspaces, 
   onWorkspaceChange, 
-  onCreateWorkspace 
+  onCreateWorkspace,
+  onRefreshWorkspaces // New prop
 }: ChatInterfaceProps) {
   const { data: session } = useSession()
   const [currentChannel, setCurrentChannel] = useState(null)
@@ -317,11 +319,16 @@ export function ChatInterface({
           onChannelSelect={handleChannelSelect}
           onChannelCreated={(channel) => {
             // Refresh workspace data or add channel to state
-            window.location.reload() // Simple refresh for now
+            // For now, channel creation also reloads. This could be refined similarly.
+            window.location.reload()
           }}
-          onMemberInvited={(member) => {
-            // Refresh workspace data or add member to state
-            window.location.reload() // Simple refresh for now
+          onMemberInvited={(member) => { // This 'member' is the invited user/member object
+            if (onRefreshWorkspaces) {
+              onRefreshWorkspaces();
+            } else {
+              // Fallback if no refresh function is provided (though it should be)
+              window.location.reload();
+            }
           }}
           onDirectMessage={handleDirectMessage}
         />

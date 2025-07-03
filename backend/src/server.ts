@@ -21,7 +21,8 @@ import userRoutes from './routes/users'
 import notificationRoutes from './routes/notifications'
 import reactionRoutes from './routes/reactions'
 import fileRoutes from './routes/files'
-import publicFileRoutes from './routes/publicFiles' // Import public file routes
+import publicFileRoutes from './routes/publicFiles'
+import inviteRoutes from './routes/invites' // Import invite routes
 
 dotenv.config()
 
@@ -82,6 +83,7 @@ app.set('userSockets', new Map<string, string>()); // Initialize userSockets map
 
 // API routes
 app.use('/api/auth', authRoutes)
+app.use('/api/invites', inviteRoutes); // Invite routes (GET /:token is unauthenticated, POST /:token/accept needs auth)
 app.use('/api/workspaces', authMiddleware, workspaceRoutes) // This handles /api/workspaces and /api/workspaces/:workspaceId
 // Mount channelRoutes under /api/workspaces/:workspaceId/channels
 // Note: workspaceRoutes already handles /:workspaceId, so this needs to be integrated carefully OR

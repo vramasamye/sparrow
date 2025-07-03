@@ -209,6 +209,53 @@ router.put('/:workspaceId', roleCheckMiddleware([MemberRole.ADMIN]), async (req:
   }
 });
 
+// Create an invite link for a workspace - ADMIN only
+router.post('/:workspaceId/invites', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { workspaceId } = req.params;
+    const { email, role, expiresInHours, maxUses } = req.body as {
+      email?: string;
+      role?: MemberRole;
+      expiresInHours?: number;
+      maxUses?: number;
+    };
+    const invitedById = req.user!.id;
+
+    // Generate a unique token
+    const crypto = await import('crypto'); // Dynamically import crypto
+    const token = crypto.randomBytes(32).toString('hex');
+
+    let expiresAt: Date | undefined = undefined;
+    if (expiresInHours && expiresInHours > 0) {
+      expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
+    }
+
+    const invite = await db.workspaceInvite.create({
+      data: {
+        workspaceId,
+        invitedById,
+        token,
+        email: email || null,
+        role: role || MemberRole.MEMBER, // Default to MEMBER if not specified
+        expiresAt,
+        maxUses: maxUses && maxUses > 0 ? maxUses : null, // null for unlimited uses unless specified
+      },
+      include: {
+        workspace: { select: { name: true } }, // Include some context if needed in response
+        invitedBy: { select: { username: true, name: true } }
+      }
+    });
+
+    logger.info(`Invite link created for workspace ${workspaceId} by admin ${invitedById}. Token: ${token}`);
+    // The frontend will construct the full URL, e.g., app.com/invite/[token]
+    res.status(201).json({ invite });
+
+  } catch (error) {
+    logger.error(`Create invite link error for workspace ${req.params.workspaceId}:`, error);
+    res.status(500).json({ error: 'Failed to create invite link.' });
+  }
+});
+
 // Delete workspace - ADMIN only
 router.delete('/:workspaceId', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
   try {

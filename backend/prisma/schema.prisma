@@ -34,6 +34,7 @@ model User {
   triggeredNotifications Notification[]  @relation("UserTriggeredNotifications") // Notifications sent by this user
   reactions              Reaction[]      // Reactions made by this user
   uploadedAttachments    Attachment[]    @relation("UserUploads")
+  sentWorkspaceInvites   WorkspaceInvite[] // Invites sent by this user
 
   @@map("users")
 }
@@ -52,6 +53,7 @@ model Workspace {
   channels Channel[]
   messages Message[]
   attachments Attachment[] @relation("WorkspaceAttachments")
+  invites     WorkspaceInvite[] // Invites associated with this workspace
 
 
   @@map("workspaces")
@@ -194,6 +196,28 @@ model Attachment {
 
   @@map("attachments")
 }
+
+model WorkspaceInvite {
+  id            String     @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  email         String?    // Optional: if invite is targeted to a specific email
+  token         String     @unique // Secure, random token for the invite link
+  role          MemberRole @default(MEMBER) // Role to assign upon accepting invite
+
+  expiresAt     DateTime?  // Optional: for time-limited invites
+  maxUses       Int?       // Optional: max number of times invite can be used (e.g., 1 for single-use)
+  uses          Int        @default(0) // Number of times invite has been used
+
+  invitedById   String
+  invitedBy     User       @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime   @default(now())
+
+  @@map("workspace_invites")
+}
+
 
 enum MemberRole {
   ADMIN

@@ -41,7 +41,17 @@ export default function Dashboard() {
     }
   }
 
+  const refreshWorkspaces = () => {
+    // Optionally, could try to be smarter and only refetch the currentWorkspace if its ID is known
+    // and if the invite was for the currentWorkspace.
+    // For now, a full reload of all workspaces is simpler.
+    setLoading(true); // Show loading indicator during refresh
+    loadWorkspaces();
+  }
+
   const handleWorkspaceCreated = (workspace: any) => {
+    // When a new workspace is created, it's added to the list and set as current.
+    // No need to call refreshWorkspaces which reloads all.
     setWorkspaces(prev => [...prev, workspace])
     setCurrentWorkspace(workspace)
     setShowCreateWorkspace(false)
@@ -94,6 +104,7 @@ export default function Dashboard() {
         workspaces={workspaces}
         onWorkspaceChange={setCurrentWorkspace}
         onCreateWorkspace={() => setShowCreateWorkspace(true)}
+        onRefreshWorkspaces={refreshWorkspaces} // Pass the refresh function
       />
       
       {showCreateWorkspace && (
