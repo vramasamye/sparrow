@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 // import { useSession } from 'next-auth/react'
 // import { useSocket } from '@/hooks/useSocket' // For real-time updates if panel is open
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+
 
 interface Notification {
   id: string;
@@ -180,15 +182,37 @@ export function NotificationPanel({
                 <li
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
-                  className={`p-4 hover:bg-slate-50 cursor-pointer ${notification.isRead ? 'opacity-70' : 'font-semibold'}`}
+                  className={`p-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer ${notification.isRead ? 'opacity-70' : ''}`} // Removed font-semibold for now, unread dot is primary
                 >
                   <div className="flex items-start gap-3">
-                    <div className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${notification.isRead ? 'bg-slate-300' : 'bg-indigo-500'}`}></div>
+                    {/* Avatar of sender */}
+                    <div className="flex-shrink-0 mt-0.5">
+                      {notification.sender.avatar ? (
+                        <img
+                          src={getAvatarUrl(notification.sender.avatar)}
+                          alt={notification.sender.name || notification.sender.username}
+                          className="w-6 h-6 rounded-full object-cover"
+                          onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+                        />
+                      ) : (
+                        <div className="w-6 h-6 bg-slate-600 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                          <span className="text-white text-[10px] font-semibold">
+                            {getInitials(notification.sender.name, notification.sender.username)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1">
-                      <p className={`text-sm ${notification.isRead ? 'text-slate-600' : 'text-slate-800'}`}>
-                        {getNotificationMessage(notification)}
-                      </p>
-                      <p className={`text-xs mt-1 ${notification.isRead ? 'text-slate-400' : 'text-slate-500'}`}>
+                       {/* Unread indicator dot */}
+                      <div className="flex items-center justify-between">
+                        <p className={`text-sm ${notification.isRead ? 'text-slate-600 dark:text-slate-300' : 'text-slate-800 dark:text-slate-100 font-semibold'}`}>
+                          {getNotificationMessage(notification)}
+                        </p>
+                        {!notification.isRead && (
+                          <div className="w-2 h-2 bg-indigo-500 rounded-full flex-shrink-0 ml-2"></div>
+                        )}
+                      </div>
+                      <p className={`text-xs mt-0.5 ${notification.isRead ? 'text-slate-400 dark:text-slate-500' : 'text-slate-500 dark:text-slate-400'}`}>
                         {new Date(notification.createdAt).toLocaleString()}
                       </p>
                       {notification.message && (

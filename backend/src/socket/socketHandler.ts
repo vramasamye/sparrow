@@ -282,14 +282,14 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     })
 
     // Handle new message
-    socket.on('send_message', async (data: { channelId?: string; recipientId?: string; content: string; parentId?: string }) => { // Added parentId
+    socket.on('send_message', async (data: { channelId?: string; recipientId?: string; content: string; parentId?: string; attachmentIds?: string[] }) => { // Added attachmentIds
       try {
-        const { channelId, recipientId, content, parentId } = data; // Added parentId
+        const { channelId, recipientId, content, parentId, attachmentIds } = data; // Added attachmentIds
         const userId = socket.data.user.id;
         const senderUser = socket.data.user;
 
-        if (!content) {
-          socket.emit('error', { message: 'Message content is required' });
+        if (!content && (!attachmentIds || attachmentIds.length === 0)) { // Message must have content or attachments
+          socket.emit('error', { message: 'Message content or attachments are required' });
           return;
         }
         if (!channelId && !recipientId) {
@@ -297,9 +297,11 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
             return;
         }
 
-        let finalMessage: any;
+        let finalMessage: any; // Will hold the message object after all DB operations
+        let messageIdForRefetch: string | null = null; // To ensure we have the ID after transaction
 
         await db.$transaction(async (prisma) => {
+          let createdMessageInTransaction: any;
           let determinedThreadId: string | null = null;
           const messageData: any = {
             content,
@@ -307,7 +309,7 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
             channelId: channelId || null,
             recipientId: recipientId || null,
             parentId: parentId || null,
-            workspaceId: null,
+            workspaceId: null, // Will be set if channelId is present
           };
 
           if (channelId) {
@@ -352,46 +354,78 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
             });
           }
 
-          finalMessage = createdMessage; // Store for use after transaction
+          createdMessageInTransaction = await prisma.message.update({ // Renamed from finalMessage to createdMessageInTransaction
+            where: { id: createdMessage.id },
+            data: { threadId: createdMessage.id },
+            include: { user: { select: { id: true, username: true, name: true } } },
+          });
+        } else {
+          createdMessageInTransaction = createdMessage; // Use if already a reply
+        }
 
           // Handle mentions
-          if (finalMessage.channelId) {
+          if (createdMessageInTransaction.channelId) {
             const { mentionedUserIds } = await handleMentionsAndNotificationsSocket(
-              io, app, finalMessage, userId, finalMessage.workspaceId, finalMessage.channelId
+              io, app, createdMessageInTransaction, userId, createdMessageInTransaction.workspaceId, createdMessageInTransaction.channelId
             );
             if (mentionedUserIds.length > 0) {
-              finalMessage = await prisma.message.update({
-                where: { id: finalMessage.id },
+              createdMessageInTransaction = await prisma.message.update({
+                where: { id: createdMessageInTransaction.id },
                 data: { mentionedUserIds: mentionedUserIds.join(',') },
                 include: { user: { select: { id: true, username: true, name: true } } },
               });
             }
           }
 
-          // DM notifications
-          if (finalMessage.recipientId && userId !== finalMessage.recipientId) {
+          // Link attachments
+          if (attachmentIds && attachmentIds.length > 0) {
+            const attachmentsToLink = await prisma.attachment.findMany({
+              where: {
+                id: { in: attachmentIds as string[] },
+                uploaderId: userId,
+                messageId: null,
+                ...(messageData.workspaceId && { workspaceId: messageData.workspaceId }),
+              }
+            });
+            if (attachmentsToLink.length !== attachmentIds.length) {
+              throw new Error('Invalid or already linked attachments provided for socket message.');
+            }
+            await prisma.attachment.updateMany({
+              where: { id: { in: attachmentsToLink.map(att => att.id) } },
+              data: { messageId: createdMessageInTransaction.id }
+            });
+          }
+
+          // DM notifications (using createdMessageInTransaction)
+          if (createdMessageInTransaction.recipientId && userId !== createdMessageInTransaction.recipientId) {
             const notification = await prisma.notification.create({
               data: {
-                userId: finalMessage.recipientId, type: 'new_dm', messageId: finalMessage.id, senderId: userId,
+                userId: createdMessageInTransaction.recipientId, type: 'new_dm', messageId: createdMessageInTransaction.id, senderId: userId,
               },
               include: {
                 sender: { select: { id: true, username: true, name: true } },
                 message: { select: { id: true, content: true, channelId: true, recipientId: true } },
               },
             });
-            const recipientSocketId = userSocketsMap?.get(finalMessage.recipientId);
+            const recipientSocketId = userSocketsMap?.get(createdMessageInTransaction.recipientId);
             if (recipientSocketId) {
               io.to(recipientSocketId).emit('new_notification', notification);
             }
           }
+          messageIdForRefetch = createdMessageInTransaction.id; // Set ID for refetch
         }); // End transaction
 
+        if (!messageIdForRefetch) {
+          throw new Error("Socket message creation failed within transaction.");
+        }
+
         // Refetch the message with full details for broadcasting
-        finalMessage = await db.message.findUnique({
-            where: { id: finalMessage.id },
+        finalMessage = await db.message.findUnique({ // Use finalMessage here
+            where: { id: messageIdForRefetch },
             include: {
                 user: { select: { id: true, username: true, name: true, avatar: true } },
                 parentMessage: { select: { id: true, userId: true, content: true, user: {select: {id: true, username: true, name: true}}}},
+                attachments: { orderBy: { createdAt: 'asc' }} // Include attachments
             }
         });
 

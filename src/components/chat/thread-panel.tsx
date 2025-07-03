@@ -8,6 +8,8 @@ import { useSocket } from '@/hooks/useSocket'; // For sending replies & real-tim
 
 // Assuming Message interface is similar to the one in MessageList
 // Ideally, this would be a shared type
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+
 interface User {
   id: string;
   username: string;
@@ -196,11 +198,16 @@ export function ThreadPanel({
         <div className="flex gap-2.5">
           <div className="flex-shrink-0">
             {rootMessage.user.avatar ? (
-              <img src={rootMessage.user.avatar} alt={rootMessage.user.name || rootMessage.user.username} className="w-9 h-9 rounded-md object-cover"/>
+              <img
+                src={getAvatarUrl(rootMessage.user.avatar)}
+                alt={rootMessage.user.name || rootMessage.user.username}
+                className="w-9 h-9 rounded-md object-cover"
+                onError={(e) => e.currentTarget.src = getAvatarUrl(null)}
+              />
             ) : (
-              <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-md flex items-center justify-center">
+              <div className="w-9 h-9 bg-slate-600 dark:bg-slate-700 rounded-md flex items-center justify-center">
                 <span className="text-white text-xs font-semibold">
-                  {rootMessage.user.name?.[0]?.toUpperCase() || rootMessage.user.username[0]?.toUpperCase()}
+                  {getInitials(rootMessage.user.name, rootMessage.user.username)}
                 </span>
               </div>
             )}

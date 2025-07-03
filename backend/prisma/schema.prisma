@@ -16,7 +16,10 @@ model User {
   username  String   @unique
   password  String
   name      String?
-  avatar    String?
+  avatar    String?    // URL to the avatar image
+  bio       String?    // For potentially longer text (SQLite TEXT type is default for String)
+  jobTitle  String?
+  pronouns  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -30,6 +33,7 @@ model User {
   notifications          Notification[]  @relation("UserNotifications") // Notifications received by this user
   triggeredNotifications Notification[]  @relation("UserTriggeredNotifications") // Notifications sent by this user
   reactions              Reaction[]      // Reactions made by this user
+  uploadedAttachments    Attachment[]    @relation("UserUploads")
 
   @@map("users")
 }
@@ -47,6 +51,8 @@ model Workspace {
   members  Member[]
   channels Channel[]
   messages Message[]
+  attachments Attachment[] @relation("WorkspaceAttachments")
+
 
   @@map("workspaces")
 }
@@ -128,6 +134,7 @@ model Message {
   replyCount    Int        @default(0)
   lastReplyAt   DateTime?  // Timestamp of the last reply in the thread, for sorting threads.
   reactions     Reaction[] // Reactions on this message
+  attachments   Attachment[] // Attachments on this message
 
   @@index([threadId, createdAt]) // To fetch all messages in a thread and sort them
   @@map("messages")
@@ -165,6 +172,27 @@ model Notification {
 
   @@index([userId, isRead, createdAt])
   @@map("notifications")
+}
+
+model Attachment {
+  id          String    @id @default(cuid())
+  filename    String
+  mimetype    String
+  size        Int // in bytes
+  url         String // URL to access the stored file (local path for dev)
+
+  messageId   String?
+  message     Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull) // SetNull so attachment record remains if message is deleted
+
+  uploaderId  String
+  uploader    User      @relation("UserUploads", fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  workspaceId String?   // Optional: to scope attachments to a workspace
+  workspace   Workspace? @relation("WorkspaceAttachments", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+
+  @@map("attachments")
 }
 
 enum MemberRole {

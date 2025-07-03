@@ -15,9 +15,10 @@ interface WorkspaceMember {
 }
 
 interface MessageComposerProps {
-  onSendMessage: (content: string) => void
+  onSendMessage: (content: string, attachmentIds: string[]) => void // Updated signature
   placeholder?: string
   channelId?: string // For channel-based typing indicators
+  workspaceId?: string // For file uploads scoped to workspace
   workspaceMembers?: WorkspaceMember[]
   // Generic typing handlers for DM or other contexts
   onStartTyping?: () => void
@@ -28,6 +29,7 @@ export function MessageComposer({
   onSendMessage,
   placeholder = "Type a message...",
   channelId,
+  workspaceId, // Added workspaceId
   workspaceMembers = [],
   onStartTyping,
   onStopTyping
@@ -45,8 +47,16 @@ export function MessageComposer({
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 })
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false); // State for emoji picker
-  const emojiPickerButtonRef = useRef<HTMLButtonElement>(null); // Ref for emoji picker button for positioning
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerButtonRef = useRef<HTMLButtonElement>(null);
+
+  // State for file attachments
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [uploadedAttachmentIds, setUploadedAttachmentIds] = useState<string[]>([]);
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({}); // filename -> error message
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   const filteredMembers = mentionQuery
     ? workspaceMembers.filter(member =>
@@ -58,13 +68,136 @@ export function MessageComposer({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (message.trim()) {
-      onSendMessage(message.trim())
+    // Message must have content OR attachments
+    if (message.trim() || uploadedAttachmentIds.length > 0) {
+      // Pass message content and attachmentIds to parent
+      // The onSendMessage prop needs to be updated to accept an object
+      // onSendMessage({ content: message.trim(), attachmentIds: uploadedAttachmentIds });
+
+      // For now, assuming onSendMessage is only for text content.
+      // The actual linking of attachmentIds to message happens on backend when message is created.
+      // So, the main onSendMessage in parent (MessageArea/DirectMessageArea) needs to be updated
+      // to include these attachmentIds when it calls the API or socket.
+      // This is a significant change to onSendMessage signature.
+      // Let's assume for now the parent will grab uploadedAttachmentIds from this component
+      // or this component passes it as a second argument or part of an object.
+      // For simplicity, I'll adjust onSendMessage to accept an object.
+      onSendMessage(message.trim(), uploadedAttachmentIds); // Correctly passing both
+
+
       setMessage('')
+      setPendingFiles([]);
+      setUploadedAttachmentIds([]);
+      setUploadProgress({});
       setShowSuggestions(false)
       handleStopTyping()
     }
   }
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      const files = Array.from(event.target.files);
+      // TODO: Filter for size/type on client-side too for better UX, before attempting upload
+      setPendingFiles(prev => [...prev, ...files]); // Add to pending list
+      files.forEach(file => handleFileUpload(file));
+      if(fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    if (!workspaceId || !session) {
+      console.error("Workspace ID or session not available for file upload.");
+      // TODO: Show error to user
+      setPendingFiles(prev => prev.filter(f => f !== file)); // Remove if cannot upload
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
+
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      // Using XMLHttpRequest for progress, but fetch can also be used with ReadableStream for progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/workspaces/${workspaceId}/files/upload`, true);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          setUploadProgress(prev => ({ ...prev, [file.name]: percentComplete }));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 201) {
+          const response = JSON.parse(xhr.responseText);
+          setUploadedAttachmentIds(prev => [...prev, response.attachment.id]);
+          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
+        } else {
+          const errorMsg = JSON.parse(xhr.responseText)?.error || `Upload failed (${xhr.status})`;
+          console.error(`Upload failed for ${file.name}: ${xhr.statusText}`, xhr.responseText);
+          setUploadErrors(prev => ({ ...prev, [file.name]: errorMsg }));
+          setUploadProgress(prev => { // Keep progress to show it alongside error, or clear it
+            const newProgress = { ...prev };
+             // delete newProgress[file.name]; // Option: clear progress on error
+            return newProgress;
+          });
+          // Do not remove from pendingFiles here, let user see the error and remove manually
+        }
+      };
+
+      xhr.onerror = () => {
+        const errorMsg = "Network error during upload.";
+        console.error(`Upload error for ${file.name}`);
+        setUploadErrors(prev => ({ ...prev, [file.name]: errorMsg }));
+        setUploadProgress(prev => {
+            const newProgress = { ...prev };
+            // delete newProgress[file.name];
+            return newProgress;
+          });
+      };
+
+      xhr.send(formData);
+
+    } catch (error) {
+      const errorMsg = "Exception during upload setup.";
+      console.error(`Exception during upload for ${file.name}:`, error);
+      setUploadErrors(prev => ({ ...prev, [file.name]: errorMsg }));
+       setUploadProgress(prev => {
+            const newProgress = { ...prev };
+            // delete newProgress[file.name];
+            return newProgress;
+        });
+    }
+  };
+
+  const handleRemovePendingFile = (fileNameToRemove: string) => {
+    // Find the actual file object to potentially cancel its XHR if needed (complex, skip for now)
+    const fileToRemove = pendingFiles.find(f => f.name === fileNameToRemove);
+
+    setPendingFiles(prev => prev.filter(f => f.name !== fileNameToRemove));
+    // If file was successfully uploaded, its ID should be removed from uploadedAttachmentIds
+    // This requires mapping filename to attachment ID post-upload, or storing more info in pendingFiles state.
+    // For now, this simple removal from pendingFiles means successfully uploaded files before message send
+    // cannot be "removed" from the composer by this button after upload success, only from the pending visual list.
+    // This is a UX point to improve: allow removal of successfully (pre-send) uploaded files.
+
+    setUploadProgress(prev => {
+      const newProgress = { ...prev };
+      delete newProgress[fileNameToRemove];
+      return newProgress;
+    });
+    setUploadErrors(prev => {
+        const newErrors = {...prev};
+        delete newErrors[fileNameToRemove];
+        return newErrors;
+    });
+     // TODO: If upload is in progress, find its XHR and call xhr.abort()
+  };
+
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value
@@ -253,7 +386,34 @@ export function MessageComposer({
         <div className="flex-1 relative">
           {/* Main input and formatting toolbar container */}
           {/* Dark mode borders and focus ring */}
-          <div className="border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 dark:focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
+          <div className="border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 dark:focus-within:ring-indigo-500 focus-within:border-transparent transition-all flex flex-col">
+            {/* Pending Files Display */}
+            {pendingFiles.length > 0 && (
+              <div className="p-2 border-b border-slate-200 dark:border-slate-600 max-h-28 overflow-y-auto">
+                {pendingFiles.map((file, index) => (
+                  <div key={index} className="flex items-center justify-between text-xs p-1 bg-slate-50 dark:bg-slate-700 rounded mb-1">
+                    <span className="truncate text-slate-700 dark:text-slate-300">{file.name} ({Math.round(file.size / 1024)}KB)</span>
+                    <div className="flex items-center">
+                      {uploadErrors[file.name] ? (
+                        <span className="text-red-500 dark:text-red-400 mr-2 text-xs truncate" title={uploadErrors[file.name]}>Error</span>
+                      ) : uploadProgress[file.name] !== undefined && uploadProgress[file.name] < 100 ? (
+                        <span className="text-indigo-600 dark:text-indigo-400 mr-2">{uploadProgress[file.name]}%</span>
+                      ) : uploadProgress[file.name] === 100 ? (
+                         <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"></path></svg>
+                      ) : null} {/* End of progress/success/error display */}
+                       <button
+                        type="button"
+                        onClick={() => handleRemovePendingFile(file.name)}
+                        className="p-0.5 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 rounded-full hover:bg-red-100 dark:hover:bg-red-600/50"
+                        title="Remove file"
+                      >
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"></path></svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={message}
@@ -328,8 +488,17 @@ export function MessageComposer({
                     <path fillRule="evenodd" d="M10.5 3a1 1 0 00-1 1v12a1 1 0 001 1h1a1 1 0 001-1V4a1 1 0 00-1-1h-1z" clipRule="evenodd" />
                   </svg>
                 </button>
+                <input
+                  type="file"
+                  multiple
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" // Example accept list
+                />
                 <button
                   type="button"
+                  onClick={() => fileInputRef.current?.click()}
                   className="p-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
                   title="Attach file"
                 >
