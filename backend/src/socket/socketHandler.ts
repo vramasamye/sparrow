@@ -390,14 +390,7 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
             });
           }
 
-          createdMessageInTransaction = await prisma.message.update({ // Renamed from finalMessage to createdMessageInTransaction
-            where: { id: createdMessage.id },
-            data: { threadId: createdMessage.id },
-            include: { user: { select: { id: true, username: true, name: true } } },
-          });
-        } else {
-          createdMessageInTransaction = createdMessage; // Use if already a reply
-        }
+          createdMessageInTransaction = createdMessage;
 
           // Handle mentions
           if (createdMessageInTransaction.channelId) {
@@ -541,97 +534,6 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
       } catch (error) {
         logger.error('Send message error (socket):', error)
         socket.emit('error', { message: 'Failed to send message: ' + (error as Error).message })
-      }
-    })
-
-    // Handle typing indicators for Channels
-    socket.on('start_typing', async (data: { channelId: string }) => {
-      try {
-        const { channelId } = data
-        const currentUser = socket.data.user;
-
-        // Verify user is member of channel
-            io,
-            app, // Pass app
-            createdMessage,
-            userId,
-            channel.workspaceId,
-            channelId
-          )
-
-          // 3. Update message with mentionedUserIds if any
-          if (mentionedUserIds.length > 0) {
-            createdMessage = await db.message.update({
-              where: { id: createdMessage.id },
-              data: { mentionedUserIds: mentionedUserIds.join(',') },
-              include: { user: { select: { id: true, username: true, name: true } } },
-            })
-          }
-
-          message = createdMessage // Use the potentially updated message
-
-          // Broadcast to channel members
-          io.to(`channel:${channelId}`).emit('new_message', {
-            id: message.id,
-            content: message.content,
-            userId: message.userId,
-            channelId: message.channelId,
-            workspaceId: message.workspaceId,
-            mentionedUserIds: message.mentionedUserIds,
-            createdAt: message.createdAt.toISOString(),
-            user: message.user,
-          })
-
-        } else if (recipientId) {
-          // Direct message
-          message = await db.message.create({
-            data: { content, userId, recipientId },
-            include: { user: { select: { id: true, username: true, name: true } } },
-          })
-
-          const messageData: MessageData = {
-            id: message.id,
-            content: message.content,
-            userId: message.userId,
-            recipientId: message.recipientId,
-            createdAt: message.createdAt.toISOString(),
-            user: message.user,
-          }
-
-          // Send to sender
-          socket.emit('new_direct_message', messageData)
-
-          // Send to recipient if online
-          const recipientSocketId = userSocketsMap?.get(recipientId)
-          if (recipientSocketId) {
-            io.to(recipientSocketId).emit('new_direct_message', messageData)
-
-            // Create and emit notification for DM
-            if (userId !== recipientId) {
-              const notification = await db.notification.create({
-                data: {
-                  userId: recipientId,
-                  type: 'new_dm',
-                  messageId: message.id,
-                  senderId: userId,
-                },
-                include: {
-                    sender: { select: { id: true, username: true, name: true }},
-                    message: { select: { id: true, content: true, channelId: true, recipientId: true }},
-                }
-              })
-              io.to(recipientSocketId).emit('new_notification', notification)
-            }
-          }
-        } else {
-            socket.emit('error', { message: 'Message target (channelId or recipientId) is required.'})
-            return
-        }
-
-        logger.info(`Message sent by ${senderUser.username} to ${channelId ? `channel ${channelId}` : `user ${recipientId}`}`)
-      } catch (error) {
-        logger.error('Send message error:', error)
-        socket.emit('error', { message: 'Failed to send message' })
       }
     })
 

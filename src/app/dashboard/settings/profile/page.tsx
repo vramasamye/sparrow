@@ -1,8 +1,9 @@
 'use client'
 
 import { useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation'; // For redirecting if not authenticated
+import EmojiPicker from '@/components/ui/emoji-picker';
 
 interface UserProfile {
   id: string;
@@ -13,7 +14,10 @@ interface UserProfile {
   bio?: string | null;
   jobTitle?: string | null;
   pronouns?: string | null;
+  customStatusText?: string | null;
+  customStatusEmoji?: string | null;
   createdAt: string;
+  members?: Array<{workspace?: {id: string}}>;
 }
 
 export default function ProfilePage() {
@@ -35,6 +39,7 @@ export default function ProfilePage() {
   const [customStatusEmoji, setCustomStatusEmoji] = useState('');
   const [showStatusEmojiPicker, setShowStatusEmojiPicker] = useState(false);
   const statusEmojiPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
 
 
   useEffect(() => {
@@ -51,20 +56,6 @@ export default function ProfilePage() {
       setCustomStatusEmoji(profile.customStatusEmoji || '');
     }
     if (profile && isEditing) { // When entering edit mode specifically
-      setNewAvatarFile(null);
-      setAvatarPreview(null);
-    }
-  }, [profile, isEditing]);
-
-  useEffect(() => {
-    if (status === 'loading') return;
-        name: profile.name || "",
-        username: profile.username || "",
-        bio: profile.bio || "",
-        jobTitle: profile.jobTitle || "",
-        pronouns: profile.pronouns || "",
-        avatar: profile.avatar // Store current avatar URL for reference, not directly edited here
-      });
       setNewAvatarFile(null);
       setAvatarPreview(null);
     }
@@ -139,9 +130,6 @@ export default function ProfilePage() {
       return avatarFilename; // It's already a full URL
     }
     return `/api/public-files/view/${avatarFilename}`;
-  };
-
-
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -259,8 +247,6 @@ export default function ProfilePage() {
   };
 
 
-  };
-
   const handleSetCustomStatus = async () => {
     if (!session) return;
     setIsSubmitting(true); // Can use a separate loading state for status if preferred
@@ -321,10 +307,9 @@ export default function ProfilePage() {
     setShowStatusEmojiPicker(false);
   };
 
-
   return (
     <div className="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
-      <header className="mb-6"> {/* Reduced mb */}
+      <header className="mb-6">
         <h1 className="text-3xl font-bold text-slate-800 dark:text-slate-100">My Profile</h1>
       </header>
 
@@ -343,7 +328,7 @@ export default function ProfilePage() {
                 {customStatusEmoji || '🙂'} {/* Default emoji if none selected */}
               </button>
               {showStatusEmojiPicker && (
-                <div className="absolute z-10 mt-1" ref={emojiPickerRef}> {/* emojiPickerRef for outside click */}
+                <div className="absolute z-10 mt-1" ref={emojiPickerRef}>
                   <EmojiPicker onEmojiSelect={handleStatusEmojiSelect} onClose={() => setShowStatusEmojiPicker(false)} />
                 </div>
               )}
@@ -376,8 +361,6 @@ export default function ProfilePage() {
             </p>
         )}
       </div>
-
-
       {isEditing ? (
         <form onSubmit={handleSubmitEdit} className="bg-white dark:bg-slate-800 shadow-xl rounded-lg p-6 md:p-8 space-y-6">
           {/* Avatar Editing */}
