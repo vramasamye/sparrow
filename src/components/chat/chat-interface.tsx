@@ -45,8 +45,8 @@ export function ChatInterface({
   const [currentDM, setCurrentDM] = useState(null)
   const [showUserSearch, setShowUserSearch] = useState(false)
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
-  const [unreadDmSenders, setUnreadDmSenders] = useState<Set<string>>(new Set()); // Track senders of unread DMs
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0) // This is for the main bell, still needed
+  // const [unreadDmSenders, setUnreadDmSenders] = useState<Set<string>>(new Set()); // Removed, NotificationContext handles this
   const {
     joinWorkspace,
     isConnected,
@@ -55,9 +55,10 @@ export function ChatInterface({
     onUserLeftChannel,
     onAddedToChannelHook,
     onRemovedFromChannelHook,
-    onChannelUpdated        // New for archive status
+    onChannelUpdated
   } = useSocket();
   const { presences } = usePresence();
+  const { unreadNotifications, markNotificationsAsReadForContext: markChannelOrDmAsRead } = useNotificationContext(); // Get full list for filtering
 
   const currentUserMemberInfo = workspace?.members?.find((m: any) => m.userId === session?.user?.id);
   const isCurrentUserAdmin = currentUserMemberInfo?.role === 'ADMIN';
@@ -89,14 +90,14 @@ export function ChatInterface({
     if (!onNewNotification) return;
 
     const cleanup = onNewNotification((notification: Notification) => {
-      setUnreadNotificationCount(prev => prev + 1);
+      setUnreadNotificationCount(prev => prev + 1); // This still updates the main bell count
 
-      if (notification.type === 'new_dm' && notification.sender?.id) {
-        // Only add if the DM is not currently open with that sender
-        if (currentDM?.id !== notification.sender.id) {
-          setUnreadDmSenders(prev => new Set(prev).add(notification.sender.id));
-        }
-      }
+      // Logic for unreadDmSenders is now handled by NotificationContext
+      // if (notification.type === 'new_dm' && notification.sender?.id) {
+      //   if (currentDM?.id !== notification.sender.id) {
+      //     setUnreadDmSenders(prev => new Set(prev).add(notification.sender.id));
+      //   }
+      // }
 
       // Optionally, trigger a browser notification
       if (Notification.permission === "granted") {
@@ -320,33 +321,37 @@ export function ChatInterface({
     }
   }, [workspace?.id, isConnected, joinWorkspace])
 
+  const { markNotificationsAsReadForContext: markDmAsRead } = useNotificationContext(); // Get context method
+
   const handleDirectMessage = async (user: any) => {
     setCurrentChannel(null)
     setCurrentDM(user)
 
-    // Clear unread DM sender indicator for this user
-    setUnreadDmSenders(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(user.id);
-      return newSet;
-    });
+    // Clear unread DM sender indicator for this user via NotificationContext
+    markDmAsRead(user.id, 'dm');
+
 
     // Mark actual 'new_dm' notifications from this user as read on the backend
     if (session) {
       try {
         // First, fetch unread 'new_dm' notifications from this specific sender
+        // This API call to fetch and then mark read is still valid for backend.
+        // The NotificationContext update is for client-side immediate feedback on counts.
         const response = await fetch(`/api/notifications?status=unread&type=new_dm&senderId=${user.id}`, {
             headers: { 'Authorization': `Bearer ${session.accessToken}` }
         });
         if (response.ok) {
             const { notifications: dmNotificationsToRead } = await response.json();
             for (const notif of dmNotificationsToRead) {
-                if (notif.sender.id === user.id) { // Double check sender
+                if (notif.sender.id === user.id) {
                     await fetch(`/api/notifications/${notif.id}/read`, {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${session.accessToken}` }
                     });
-                    // Decrement global unread count as these are marked read
+                    // Global unread count for the bell still needs decrementing here
+                    // as NotificationContext's markAsRead might not affect NotificationBell's total directly
+                    // unless NotificationBell also uses NotificationContext for its total.
+                    // For now, let NotificationBell manage its total and ChatInterface manage its part.
                     setUnreadNotificationCount(prev => Math.max(0, prev - 1));
                 }
             }
@@ -413,9 +418,9 @@ export function ChatInterface({
           workspace={workspace}
           currentChannel={currentChannel}
           currentDM={currentDM}
-          unreadDmSenders={unreadDmSenders}
+          // unreadDmSenders={unreadDmSenders} // Removed, NotificationContext handles this
           isCurrentUserAdmin={isCurrentUserAdmin}
-          currentUserRole={currentUserRole} // Pass current user's role
+          currentUserRole={currentUserRole}
           onChannelSelect={handleChannelSelect}
           onChannelCreated={(channel) => {
             // Refresh workspace data or add channel to state

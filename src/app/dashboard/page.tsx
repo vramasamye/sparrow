@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ChatInterface } from '@/components/chat/chat-interface'
 import { CreateWorkspaceModal } from '@/components/workspace/create-workspace-modal'
+import { NotificationProvider } from '@/contexts/NotificationContext' // Import NotificationProvider
 
 export default function Dashboard() {
   const { data: session, status } = useSession()
@@ -98,16 +99,17 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="h-screen flex bg-gray-100">
-      <ChatInterface 
-        workspace={currentWorkspace}
-        workspaces={workspaces}
-        onWorkspaceChange={setCurrentWorkspace}
-        onCreateWorkspace={() => setShowCreateWorkspace(true)}
-        onRefreshWorkspaces={refreshWorkspaces} // Pass the refresh function
-      />
-      
-      {showCreateWorkspace && (
+    <NotificationProvider> {/* Wrap with NotificationProvider */}
+      <div className="h-screen flex bg-gray-100 dark:bg-slate-950"> {/* Added dark bg for consistency */}
+        <ChatInterface
+          workspace={currentWorkspace}
+          workspaces={workspaces}
+          onWorkspaceChange={setCurrentWorkspace}
+          onCreateWorkspace={() => setShowCreateWorkspace(true)}
+          onRefreshWorkspaces={refreshWorkspaces}
+        />
+
+        {showCreateWorkspace && (
         <CreateWorkspaceModal
           onClose={() => setShowCreateWorkspace(false)}
           onWorkspaceCreated={handleWorkspaceCreated}
