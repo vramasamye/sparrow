@@ -267,6 +267,31 @@ export function useSocket() {
       socket.on('workspace_presence_state', callback);
       return () => socket.off && socket.off('workspace_presence_state', callback);
     }, [socket]),
+
+    // Channel Member Management Events (from current plan)
+    onUserAddedToChannelHook: useCallback((callback: (data: { channelId: string; userId: string; addedByUserId: string; userDetails: any }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('user_added_to_channel', callback);
+      return () => socket.off && socket.off('user_added_to_channel', callback);
+    }, [socket]),
+
+    onUserRemovedFromChannelHook: useCallback((callback: (data: { channelId: string; userId: string; removedByUserId: string }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('user_removed_from_channel', callback);
+      return () => socket.off && socket.off('user_removed_from_channel', callback);
+    }, [socket]),
+
+    onAddedToChannelHook: useCallback((callback: (data: { channelId: string; channelName: string; workspaceId: string; addedByUsername: string }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('added_to_channel', callback);
+      return () => socket.off && socket.off('added_to_channel', callback);
+    }, [socket]),
+
+    onRemovedFromChannelHook: useCallback((callback: (data: { channelId: string; channelName: string; workspaceId: string; removedByUsername: string }) => void) => {
+      if (!socket || !socket.on) return () => {};
+      socket.on('removed_from_channel', callback);
+      return () => socket.off && socket.off('removed_from_channel', callback);
+    }, [socket]),
     // Note: onUserStatusChange (for online/offline) is already implemented
   }
 }

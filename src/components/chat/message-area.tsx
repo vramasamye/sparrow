@@ -3,10 +3,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
-import { TypingIndicator } from './typing-indicator'
+import { TypingIndicator } from './typing-indicator' // Keep this if used, or remove if not.
 import { useSocket } from '@/hooks/useSocket'
+import { useSession } from 'next-auth/react'; // Ensure useSession is imported once
+import { ThreadPanel } from './thread-panel';
+import { ChannelDetailsPanel } from './channel-details-panel'; // Import ChannelDetailsPanel
 
-interface WorkspaceMember { // Define this type here or import from a shared types file
+
+interface WorkspaceMember {
   user: {
     id: string
     username: string
@@ -16,23 +20,18 @@ interface WorkspaceMember { // Define this type here or import from a shared typ
 interface MessageAreaProps {
   channel: any
   workspaceMembers?: WorkspaceMember[]
+  isCurrentUserAdmin?: boolean; // Added for ChannelDetailsPanel
 }
 
-export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
-  const [messages, setMessages] = useState<any[]>([]) // Use a more specific Message type if available
+export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin = false }: MessageAreaProps) {
+  const { data: session } = useSession();
+  const [messages, setMessages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
-  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null); // State for open thread
+  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null);
+  const [showChannelDetails, setShowChannelDetails] = useState(false); // State for panel visibility
   const messagesEndRef = useRef<HTMLDivElement>(null)
-import { ThreadPanel } from './thread-panel'; // Import ThreadPanel
 
-// ... (other imports)
-
-// ... (interface MessageAreaProps)
-
-export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
-  // ... (existing state: messages, loading, typingUsers, openedThreadId, messagesEndRef)
-  const { data: session } = useSession(); // Get session for currentUserId
   const {
     joinChannel,
     leaveChannel,
@@ -257,23 +256,32 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
         {/* Channel Header */}
         <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm"> {/* p-3 for compactness, dark mode bg */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate"> {/* text-base */}
-              <span className="text-slate-500 dark:text-slate-400"># </span>{channel.name}
-            </h2>
-            {channel.isPrivate && (
-              <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500 flex-shrink-0">
-                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"> {/* Slightly larger icon */}
-                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                </svg>
-                <span>Private</span>
-              </div>
-            )}
+            <div
+              className="flex items-center gap-2 min-w-0 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 p-1 -ml-1 rounded-md"
+              onClick={() => setShowChannelDetails(true)}
+              title="View channel details"
+            >
+              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate">
+                <span className="text-slate-500 dark:text-slate-400"># </span>{channel.name}
+              </h2>
+              {channel.isPrivate && (
+                <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500 flex-shrink-0">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                  </svg>
+                  <span>Private</span>
+                </div>
+              )}
+            </div>
           </div>
           
-          <div className="flex items-center gap-1"> {/* Reduced gap */}
-            {/* Placeholder: Channel members / info button */}
-            <button title="View channel details" className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md">
+          <div className="flex items-center gap-1">
+            {/* Channel members / info button - also opens panel */}
+            <button
+              onClick={() => setShowChannelDetails(true)}
+              title="View channel details"
+              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
+            >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </button>
              {/* Placeholder: Call button */}
@@ -332,6 +340,15 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
         currentUserId={session?.user?.id}
         onClose={() => setOpenedThreadId(null)}
         // onMessageSent={() => { /* Optionally refetch main channel messages or specific message for replyCount update */ }}
+      />
+    )}
+    {showChannelDetails && channel && (
+      <ChannelDetailsPanel
+        channel={channel}
+        workspaceId={channel.workspaceId} // Ensure channel object has workspaceId
+        onClose={() => setShowChannelDetails(false)}
+        isCurrentUserAdmin={isCurrentUserAdmin}
+        // currentUserId={session?.user?.id} // Pass if needed by panel for member list interactions
       />
     )}
   </div>

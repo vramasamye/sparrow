@@ -52,9 +52,11 @@ export function ChatInterface({
     isConnected,
     onNewNotification,
     onUserJoinedChannel,
-    onUserLeftChannel
+    onUserLeftChannel,
+    onAddedToChannelHook,    // New
+    onRemovedFromChannelHook // New
   } = useSocket();
-  const { presences } = usePresence(); // Get presences from context
+  const { presences } = usePresence();
 
   const currentUserMemberInfo = workspace?.members?.find((m: any) => m.userId === session?.user?.id);
   const isCurrentUserAdmin = currentUserMemberInfo?.role === 'ADMIN';
@@ -159,7 +161,63 @@ export function ChatInterface({
       joinedCleanup();
       leftCleanup();
     };
-  }, [onUserJoinedChannel, onUserLeftChannel, workspace, session?.user?.id, currentChannel?.id, handleChannelSelect]); // Added handleChannelSelect to dependencies
+  }, [onUserJoinedChannel, onUserLeftChannel, workspace, session?.user?.id, currentChannel?.id, handleChannelSelect]);
+
+  // Listen for current user being added/removed from channels
+  useEffect(() => {
+    if (!session?.user?.id || !workspace?.id) return;
+
+    const addedCleanup = onAddedToChannelHook?.((data) => {
+      // data: { channelId, channelName, workspaceId, addedByUsername }
+      if (data.workspaceId === workspace.id) {
+        alert(`You've been added to channel #${data.channelName} by ${data.addedByUsername}.`);
+        // Refresh workspace data to update channel list in sidebar
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+      }
+    });
+
+    const removedCleanup = onRemovedFromChannelHook?.((data) => {
+      // data: { channelId, channelName, workspaceId, removedByUsername }
+      if (data.workspaceId === workspace.id) {
+        alert(`You've been removed from channel #${data.channelName} by ${data.removedByUsername}.`);
+        if (currentChannel?.id === data.channelId) {
+          // If removed from current channel, navigate away
+          const generalChannel = workspace.channels?.find((ch:any) => ch.name === 'general') || workspace.channels?.[0];
+          if (generalChannel) {
+            handleChannelSelect(generalChannel);
+          } else {
+            setCurrentChannel(null); // No other channels, clear current channel view
+            setCurrentDM(null); // Also clear DM view
+          }
+        }
+        // Refresh workspace data to update channel list in sidebar
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+      }
+    });
+
+    return () => {
+      addedCleanup?.();
+      removedCleanup?.();
+    };
+  }, [
+    session?.user?.id,
+    workspace?.id,
+    workspace?.channels,
+    currentChannel?.id,
+    onAddedToChannelHook,
+    onRemovedFromChannelHook,
+    onRefreshWorkspaces,
+    handleChannelSelect // handleChannelSelect is stable due to useCallback if defined with it
+  ]);
+
 
   const handleMarkNotificationAsRead = async (notificationId: string) => {
     if (!session) return;
@@ -383,7 +441,11 @@ export function ChatInterface({
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white">
         {currentChannel ? (
-          <MessageArea channel={currentChannel} workspaceMembers={workspace?.members || []} />
+          <MessageArea
+            channel={currentChannel}
+            workspaceMembers={workspace?.members || []}
+            isCurrentUserAdmin={isCurrentUserAdmin} // Pass admin status
+          />
         ) : currentDM ? (
           <DirectMessageArea 
             otherUser={currentDM} 

@@ -13,9 +13,10 @@ interface User {
 interface UserSearchProps {
   onClose: () => void
   onUserSelect?: (user: User) => void
+  workspaceId?: string; // Optional: to filter search by workspace
 }
 
-export function UserSearch({ onClose, onUserSelect }: UserSearchProps) {
+export function UserSearch({ onClose, onUserSelect, workspaceId }: UserSearchProps) {
   const [query, setQuery] = useState('')
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
@@ -29,7 +30,11 @@ export function UserSearch({ onClose, onUserSelect }: UserSearchProps) {
 
       setLoading(true)
       try {
-        const response = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`)
+        let apiUrl = `/api/users/search?q=${encodeURIComponent(query)}`;
+        if (workspaceId) {
+          apiUrl += `&workspaceId=${workspaceId}`;
+        }
+        const response = await fetch(apiUrl);
         const data = await response.json()
         
         if (data.users) {
