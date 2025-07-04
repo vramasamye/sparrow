@@ -38,6 +38,7 @@ model User {
   reactions              Reaction[]      // Reactions made by this user
   uploadedAttachments    Attachment[]    @relation("UserUploads")
   sentWorkspaceInvites   WorkspaceInvite[] // Invites sent by this user
+  archivedChannels       Channel[]       @relation("ArchivedChannelsByUser") // Channels archived by this user
 
   @@map("users")
 }
@@ -86,6 +87,11 @@ model Channel {
   createdBy   String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  isArchived    Boolean   @default(false)
+  archivedAt    DateTime?
+  archivedById  String?
+  archivedBy    User?     @relation("ArchivedChannelsByUser", fields: [archivedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   // Relationships
   workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

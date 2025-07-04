@@ -22,33 +22,27 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
       },
       include: {
         channels: {
+          where: { isArchived: req.query.includeArchived === 'true' ? undefined : false }, // Filter by isArchived
           include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    username: true,
-                    name: true
-                  }
-                }
-              }
-            }
-          }
+            // Keep other includes for channels if needed, or simplify for list view
+            // For now, just basic channel details for the list.
+            // members: { select: { userId: true } } // e.g., to get member count
+          },
+          orderBy: { name: 'asc'}
         },
         members: {
           include: {
             user: {
-              select: {
-                id: true,
-                username: true,
-                name: true,
-                email: true
-              }
+              select: { id: true, username: true, name: true, email: true, avatar: true }
             }
-          }
+          },
+          orderBy: { joinedAt: 'asc' }
+        },
+        owner: { // Also include owner details
+            select: { id: true, username: true, name: true }
         }
-      }
+      },
+      orderBy: { createdAt: 'desc' }
     })
 
     res.json({ workspaces })
@@ -75,31 +69,20 @@ router.get('/:workspaceId', async (req: AuthenticatedRequest, res) => { // Chang
       },
       include: {
         channels: {
-          include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    username: true,
-                    name: true
-                  }
-                }
-              }
-            }
-          }
+          where: { isArchived: req.query.includeArchived === 'true' ? undefined : false }, // Filter by isArchived
+          orderBy: { name: 'asc' }
+          // Add other channel includes if needed for this detailed view
         },
         members: {
           include: {
             user: {
-              select: {
-                id: true,
-                username: true,
-                name: true,
-                email: true
-              }
+              select: { id: true, username: true, name: true, email: true, avatar: true, role: true } // Include role for members list
             }
-          }
+          },
+          orderBy: { joinedAt: 'asc' }
+        },
+        owner: {
+            select: { id: true, username: true, name: true }
         }
       }
     })

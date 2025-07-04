@@ -292,6 +292,12 @@ export function useSocket() {
       socket.on('removed_from_channel', callback);
       return () => socket.off && socket.off('removed_from_channel', callback);
     }, [socket]),
+
+    onChannelUpdated: useCallback((callback: (data: any) => void) => { // data: { id, name, isArchived, ... }
+      if (!socket || !socket.on) return () => {};
+      socket.on('channel_updated', callback);
+      return () => socket.off && socket.off('channel_updated', callback);
+    }, [socket]),
     // Note: onUserStatusChange (for online/offline) is already implemented
   }
 }

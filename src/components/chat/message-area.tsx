@@ -251,10 +251,10 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
   }
 
   return (
-    <div className="flex h-full"> {/* Ensure parent flex container for ThreadPanel */}
-      <div className="flex flex-col h-full flex-1"> {/* Main message area takes available space */}
+    <div className="flex h-full">
+      <div className="flex flex-col h-full flex-1">
         {/* Channel Header */}
-        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm"> {/* p-3 for compactness, dark mode bg */}
+        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
           <div className="flex items-center justify-between">
             <div
               className="flex items-center gap-2 min-w-0 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 p-1 -ml-1 rounded-md"
@@ -302,8 +302,15 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
         )}
       </div>
 
+      {/* Archived Channel Banner */}
+      {channel?.isArchived && (
+        <div className="p-3 bg-amber-100 dark:bg-amber-800/30 text-amber-700 dark:text-amber-300 text-sm text-center border-b border-amber-200 dark:border-amber-700">
+          This channel is archived. It is read-only.
+        </div>
+      )}
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto bg-slate-50">
+      <div className={`flex-1 overflow-y-auto ${channel?.isArchived ? 'bg-slate-100 dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-850'}`}> {/* Slightly different bg for archived */}
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
@@ -319,16 +326,18 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
         )}
       </div>
 
-      {/* Message Composer */}
-      <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700"> {/* Dark mode for composer container */}
-        <MessageComposer 
-          onSendMessage={handleSendMessage}
-          placeholder={`Message #${channel.name}`}
-          channelId={channel.id}
-          workspaceId={channel?.workspaceId} // Pass workspaceId
-          workspaceMembers={workspaceMembers}
-        />
-      </div>
+      {/* Message Composer - Hidden if channel is archived */}
+      {!channel?.isArchived && (
+        <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
+          <MessageComposer
+            onSendMessage={handleSendMessage}
+            placeholder={`Message #${channel.name}`}
+            channelId={channel.id}
+            workspaceId={channel?.workspaceId}
+            workspaceMembers={workspaceMembers}
+          />
+        </div>
+      )}
     </div>
 
     {/* Thread Panel */}

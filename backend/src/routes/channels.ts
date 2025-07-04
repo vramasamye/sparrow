@@ -262,6 +262,104 @@ router.get('/:channelId/members', async (req: AuthenticatedRequest, res) => {
   }
 });
 
+// Unarchive a channel - ADMIN only
+router.put('/:channelId/unarchive', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // Available due to mergeParams
+    const currentUserId = req.user!.id;
+
+    const channelToUnarchive = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToUnarchive) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToUnarchive.workspaceId !== workspaceId) {
+        return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+    if (!channelToUnarchive.isArchived) {
+      return res.status(400).json({ error: 'Channel is not archived.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        isArchived: false,
+        archivedAt: null,
+        archivedById: null,
+      },
+      // Include necessary fields for the response and socket event
+      select: { id: true, name: true, isArchived: true, isPrivate: true, workspaceId: true, description: true, createdAt: true } // Added more fields for client update
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} unarchived by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Unarchive channel error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to unarchive channel.' });
+  }
+});
+
+// Archive a channel - ADMIN only
+router.put('/:channelId/archive', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // Available due to mergeParams and how router is mounted
+    const currentUserId = req.user!.id;
+
+    const channelToArchive = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToArchive) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToArchive.workspaceId !== workspaceId) {
+        return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+    if (channelToArchive.isArchived) {
+      return res.status(400).json({ error: 'Channel is already archived.' });
+    }
+    // Rule: Prevent archiving the "general" channel
+    if (channelToArchive.name.toLowerCase() === 'general') {
+      return res.status(400).json({ error: 'The "general" channel cannot be archived.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        isArchived: true,
+        archivedAt: new Date(),
+        archivedById: currentUserId,
+      },
+      // Include necessary fields for the response and socket event
+      select: { id: true, name: true, isArchived: true, isPrivate: true, workspaceId: true, archivedAt: true, archivedById: true }
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} archived by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Archive channel error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to archive channel.' });
+  }
+});
+
 // Remove a user from a channel
 // DELETE /api/(workspaces/:workspaceId)/channels/:channelId/members/:targetUserId
 router.delete('/:channelId/members/:targetUserId', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {

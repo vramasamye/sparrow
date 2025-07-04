@@ -53,8 +53,9 @@ export function ChatInterface({
     onNewNotification,
     onUserJoinedChannel,
     onUserLeftChannel,
-    onAddedToChannelHook,    // New
-    onRemovedFromChannelHook // New
+    onAddedToChannelHook,
+    onRemovedFromChannelHook,
+    onChannelUpdated        // New for archive status
   } = useSocket();
   const { presences } = usePresence();
 
@@ -215,8 +216,45 @@ export function ChatInterface({
     onAddedToChannelHook,
     onRemovedFromChannelHook,
     onRefreshWorkspaces,
-    handleChannelSelect // handleChannelSelect is stable due to useCallback if defined with it
+    handleChannelSelect
   ]);
+
+  // Listen for channel updates (e.g., archive/unarchive)
+  useEffect(() => {
+    if (!workspace?.id || !onChannelUpdated) return;
+
+    const cleanupChannelUpdated = onChannelUpdated((updatedChannelData: any) => {
+      // data: { id, name, isArchived, isPrivate, workspaceId, ... }
+      if (updatedChannelData.workspaceId === workspace.id) {
+        // console.log("Channel updated in current workspace:", updatedChannelData); // Keep for debug if needed, or remove for prod
+        // This is where the UI needs to react.
+        // 1. Sidebar list needs to update (show/hide channel from active list).
+        //    The simplest way is to refresh all workspace data.
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+
+        // 2. If the currentChannel is the one updated:
+        if (currentChannel?.id === updatedChannelData.id) {
+          // If it was archived and user is viewing it, MessageArea will show banner.
+          // If it was unarchived, MessageArea will hide banner/enable composer.
+          // This might require currentChannel state to be updated with new channel data.
+          // The onRefreshWorkspaces should handle updating the `workspace` prop, which in turn
+          // should update `currentChannel` if it's derived from `workspace.channels`.
+          // For now, rely on the refresh to update the `channel` prop for MessageArea.
+          // An explicit setCurrentChannel(updatedChannelData) might be needed if refresh is too slow or complex.
+
+          // If current channel is archived, and user is not admin, maybe navigate away?
+          // For now, MessageArea handles its own read-only state based on channel.isArchived.
+        }
+      }
+    });
+    return () => {
+      cleanupChannelUpdated?.();
+    };
+  }, [workspace?.id, onChannelUpdated, onRefreshWorkspaces, currentChannel?.id]);
 
 
   const handleMarkNotificationAsRead = async (notificationId: string) => {

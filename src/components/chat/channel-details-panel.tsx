@@ -62,6 +62,7 @@ export function ChannelDetailsPanel({
   const [addMemberError, setAddMemberError] = useState<string | null>(null);
   const [addMemberSuccess, setAddMemberSuccess] = useState<string | null>(null);
   const { onUserAddedToChannelHook, onUserRemovedFromChannelHook } = useSocket();
+  const [isProcessingArchive, setIsProcessingArchive] = useState(false);
 
 
   const fetchMembers = useCallback(async () => {
@@ -197,6 +198,55 @@ export function ChannelDetailsPanel({
     }
   };
 
+  const handleArchiveChannel = async () => {
+    if (!session || !channel || !workspaceId || !isCurrentUserAdmin) return;
+    if (channel.name.toLowerCase() === 'general') {
+        alert("The 'general' channel cannot be archived.");
+        return;
+    }
+    setIsProcessingArchive(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/archive`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to archive channel');
+      alert('Channel archived. UI may need a refresh to reflect changes across all components.');
+      onClose(); // Close panel
+      // TODO: Trigger global state refresh instead of window.location.reload()
+      window.location.reload();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsProcessingArchive(false);
+    }
+  };
+
+  const handleUnarchiveChannel = async () => {
+    if (!session || !channel || !workspaceId || !isCurrentUserAdmin) return;
+    setIsProcessingArchive(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/unarchive`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to unarchive channel');
+      alert('Channel unarchived. UI may need a refresh.');
+      onClose();
+      window.location.reload();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsProcessingArchive(false);
+    }
+  };
+
 
   return (
     <>
@@ -279,8 +329,33 @@ export function ChannelDetailsPanel({
       </div>
 
       {/* Other sections like "About", "Settings" for the channel can go here later */}
-      <div className="flex-1 p-4">
+      <div className="flex-1 p-4 space-y-4">
         {/* Placeholder for more channel details or settings */}
+        {isCurrentUserAdmin && channel.name.toLowerCase() !== 'general' && ( // Prevent archiving 'general' from UI too
+          <div>
+            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Channel Actions</h4>
+            {!channel.isArchived ? (
+              <button
+                onClick={handleArchiveChannel}
+                disabled={isProcessingArchive}
+                className="w-full text-sm px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-md disabled:opacity-50 flex items-center justify-center"
+              >
+                {isProcessingArchive && <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                Archive Channel
+              </button>
+            ) : (
+              <button
+                onClick={handleUnarchiveChannel}
+                disabled={isProcessingArchive}
+                className="w-full text-sm px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md disabled:opacity-50 flex items-center justify-center"
+              >
+                 {isProcessingArchive && <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                Unarchive Channel
+              </button>
+            )}
+            {error && <p className="text-xs text-red-500 mt-2">{error}</p>} {/* General error display for archive ops */}
+          </div>
+        )}
       </div>
 
       {showAddMemberSearch && (
@@ -297,3 +372,52 @@ export function ChannelDetailsPanel({
   </>
   );
 }
+
+// Helper function needs to be defined or moved if it was inside the component
+// const fetchMembers = ... (already defined as useCallback)
+// Need to define handleArchiveChannel and handleUnarchiveChannel
+
+// Adding these handlers:
+const handleArchiveChannelFunc = async (channel: Channel, workspaceId: string, session: any, setIsProcessingArchive: Function, setError: Function, onClose: Function) => {
+  if (!session || !channel || !workspaceId) return;
+  setIsProcessingArchive(true);
+  setError(null);
+  try {
+    const token = localStorage.getItem('token') || session.accessToken;
+    const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/archive`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to archive channel');
+    alert('Channel archived successfully. The view will refresh.'); // Placeholder
+    onClose(); // Close panel
+    window.location.reload(); // Force refresh to see changes in sidebar and current view
+  } catch (err: any) {
+    setError(err.message);
+  } finally {
+    setIsProcessingArchive(false);
+  }
+};
+
+const handleUnarchiveChannelFunc = async (channel: Channel, workspaceId: string, session: any, setIsProcessingArchive: Function, setError: Function, onClose: Function) => {
+  if (!session || !channel || !workspaceId) return;
+  setIsProcessingArchive(true);
+  setError(null);
+  try {
+    const token = localStorage.getItem('token') || session.accessToken;
+    const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/unarchive`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to unarchive channel');
+    alert('Channel unarchived successfully. The view will refresh.'); // Placeholder
+    onClose(); // Close panel
+    window.location.reload(); // Force refresh
+  } catch (err: any) {
+    setError(err.message);
+  } finally {
+    setIsProcessingArchive(false);
+  }
+};
