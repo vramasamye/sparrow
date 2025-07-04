@@ -39,6 +39,7 @@ model User {
   uploadedAttachments    Attachment[]    @relation("UserUploads")
   sentWorkspaceInvites   WorkspaceInvite[] // Invites sent by this user
   archivedChannels       Channel[]       @relation("ArchivedChannelsByUser") // Channels archived by this user
+  notificationPreferences UserNotificationPreference[] // User's notification preferences
 
   @@map("users")
 }
@@ -58,7 +59,7 @@ model Workspace {
   messages Message[]
   attachments Attachment[] @relation("WorkspaceAttachments")
   invites     WorkspaceInvite[] // Invites associated with this workspace
-
+  userNotificationPreferences UserNotificationPreference[] // Preferences set within this workspace
 
   @@map("workspaces")
 }
@@ -98,6 +99,7 @@ model Channel {
   members       ChannelMember[]
   messages      Message[]
   notifications Notification[]  @relation("ChannelNotifications")
+  userNotificationPreferences UserNotificationPreference[] // Preferences for this channel
 
   @@unique([name, workspaceId])
   @@map("channels")
@@ -227,6 +229,23 @@ model WorkspaceInvite {
   @@map("workspace_invites")
 }
 
+model UserNotificationPreference {
+  id                  String    @id @default(cuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  workspaceId         String
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  channelId           String?   // Null for workspace-level global settings (e.g., DMs)
+  channel             Channel?  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  notificationSetting String    // e.g., "ALL", "MENTIONS", "NONE"
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([userId, workspaceId, channelId])
+  @@map("user_notification_preferences")
+}
 
 enum MemberRole {
   ADMIN

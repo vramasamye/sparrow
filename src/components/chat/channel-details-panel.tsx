@@ -57,12 +57,18 @@ export function ChannelDetailsPanel({
   const { data: session } = useSession();
   const [members, setMembers] = useState<ChannelMember[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); // General error for panel
   const [showAddMemberSearch, setShowAddMemberSearch] = useState(false);
   const [addMemberError, setAddMemberError] = useState<string | null>(null);
   const [addMemberSuccess, setAddMemberSuccess] = useState<string | null>(null);
   const { onUserAddedToChannelHook, onUserRemovedFromChannelHook } = useSocket();
   const [isProcessingArchive, setIsProcessingArchive] = useState(false);
+
+  // State for notification preferences
+  type NotificationSetting = "ALL" | "MENTIONS" | "NONE";
+  const [currentNotifSetting, setCurrentNotifSetting] = useState<NotificationSetting>("ALL"); // Default or fetched
+  const [isSavingNotifSetting, setIsSavingNotifSetting] = useState(false);
+  const [notifSettingError, setNotifSettingError] = useState<string | null>(null);
 
 
   const fetchMembers = useCallback(async () => {
@@ -247,6 +253,71 @@ export function ChannelDetailsPanel({
     }
   };
 
+  useEffect(() => {
+    if (!channel?.id || !workspaceId || !session?.user?.id) return;
+
+    const fetchNotifPreference = async () => {
+      setNotifSettingError(null);
+      try {
+        const token = localStorage.getItem('token') || session.accessToken;
+        const response = await fetch(`/api/notification-preferences?workspaceId=${workspaceId}&channelId=${channel.id}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to fetch notification preference');
+        }
+        const data = await response.json();
+        if (data.preferences && data.preferences.notificationSetting) { // API returns { preferences: object } or { preference: null }
+          setCurrentNotifSetting(data.preferences.notificationSetting as NotificationSetting);
+        } else {
+          setCurrentNotifSetting("ALL"); // Default if no specific preference is set
+        }
+      } catch (err: any) {
+        console.error("Fetch notif preference error:", err);
+        setNotifSettingError("Could not load notification settings.");
+        // setCurrentNotifSetting("ALL"); // Default on error
+      }
+    };
+    fetchNotifPreference();
+  }, [channel?.id, workspaceId, session]);
+
+  const handleNotifSettingChange = async (newSetting: NotificationSetting) => {
+    if (!channel?.id || !workspaceId || !session?.user?.id) return;
+
+    setIsSavingNotifSetting(true);
+    setNotifSettingError(null);
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      const response = await fetch(`/api/notification-preferences`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          workspaceId,
+          channelId: channel.id,
+          setting: newSetting
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to update notification preference');
+      }
+      const data = await response.json();
+      setCurrentNotifSetting(data.preference.notificationSetting as NotificationSetting);
+      // alert("Notification preference updated!"); // Or a more subtle feedback
+    } catch (err: any) {
+      console.error("Update notif preference error:", err);
+      setNotifSettingError(err.message || "Failed to save setting.");
+      // Revert optimistic update if any, or refetch to be sure
+      // For now, currentNotifSetting might be out of sync if error occurs after optimistic set
+    } finally {
+      setIsSavingNotifSetting(false);
+    }
+  };
+
 
   return (
     <>
@@ -358,6 +429,66 @@ export function ChannelDetailsPanel({
         )}
       </div>
 
+      {/* Notification Preferences Section */}
+      <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Notifications for #{channel.name}</h4>
+        <div className="space-y-2">
+          {(["ALL", "MENTIONS", "NONE"] as NotificationSetting[]).map((setting) => (
+            <label key={setting} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+              <input
+                type="radio"
+                name={`notif-setting-${channel.id}`}
+                value={setting}
+                checked={currentNotifSetting === setting}
+                onChange={() => handleNotifSettingChange(setting)}
+                disabled={isSavingNotifSetting}
+                className="form-radio h-3.5 w-3.5 text-indigo-600 border-slate-300 dark:border-slate-600 focus:ring-indigo-500 dark:bg-slate-700 dark:checked:bg-indigo-500"
+              />
+              <span>
+                {setting === "ALL" && "All new messages"}
+                {setting === "MENTIONS" && "@mentions only"}
+                {setting === "NONE" && "Nothing"}
+              </span>
+            </label>
+          ))}
+        </div>
+        {notifSettingError && <p className="text-xs text-red-500 mt-2">{notifSettingError}</p>}
+        {isSavingNotifSetting && <p className="text-xs text-slate-500 mt-2">Saving preference...</p>}
+      </div>
+
+
+      {/* Channel Actions (Archive/Unarchive) - moved to its own bordered section */}
+      {isCurrentUserAdmin && channel.name.toLowerCase() !== 'general' && (
+        <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+          <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">Channel Actions</h4>
+            {!channel.isArchived ? (
+              <button
+                onClick={handleArchiveChannel}
+                disabled={isProcessingArchive}
+                className="w-full text-sm px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-md disabled:opacity-50 flex items-center justify-center"
+              >
+                {isProcessingArchive && <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                Archive Channel
+              </button>
+            ) : (
+              <button
+                onClick={handleUnarchiveChannel}
+                disabled={isProcessingArchive}
+                className="w-full text-sm px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md disabled:opacity-50 flex items-center justify-center"
+              >
+                 {isProcessingArchive && <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                Unarchive Channel
+              </button>
+            )}
+            {error && <p className="text-xs text-red-500 mt-2">{error}</p>} {/* General error display for archive ops */}
+        </div>
+      )}
+
+      <div className="flex-1 p-4 overflow-y-auto"> {/* Added overflow-y-auto to remaining content area */}
+        {/* Placeholder for more channel details or settings */}
+      </div>
+
+
       {showAddMemberSearch && (
         <UserSearch
           workspaceId={workspaceId} // Pass workspaceId to filter search
@@ -373,51 +504,4 @@ export function ChannelDetailsPanel({
   );
 }
 
-// Helper function needs to be defined or moved if it was inside the component
-// const fetchMembers = ... (already defined as useCallback)
-// Need to define handleArchiveChannel and handleUnarchiveChannel
-
-// Adding these handlers:
-const handleArchiveChannelFunc = async (channel: Channel, workspaceId: string, session: any, setIsProcessingArchive: Function, setError: Function, onClose: Function) => {
-  if (!session || !channel || !workspaceId) return;
-  setIsProcessingArchive(true);
-  setError(null);
-  try {
-    const token = localStorage.getItem('token') || session.accessToken;
-    const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/archive`, {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Failed to archive channel');
-    alert('Channel archived successfully. The view will refresh.'); // Placeholder
-    onClose(); // Close panel
-    window.location.reload(); // Force refresh to see changes in sidebar and current view
-  } catch (err: any) {
-    setError(err.message);
-  } finally {
-    setIsProcessingArchive(false);
-  }
-};
-
-const handleUnarchiveChannelFunc = async (channel: Channel, workspaceId: string, session: any, setIsProcessingArchive: Function, setError: Function, onClose: Function) => {
-  if (!session || !channel || !workspaceId) return;
-  setIsProcessingArchive(true);
-  setError(null);
-  try {
-    const token = localStorage.getItem('token') || session.accessToken;
-    const response = await fetch(`/api/workspaces/${workspaceId}/channels/${channel.id}/unarchive`, {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Failed to unarchive channel');
-    alert('Channel unarchived successfully. The view will refresh.'); // Placeholder
-    onClose(); // Close panel
-    window.location.reload(); // Force refresh
-  } catch (err: any) {
-    setError(err.message);
-  } finally {
-    setIsProcessingArchive(false);
-  }
-};
+// Removed external helper function definitions as they are now component methods

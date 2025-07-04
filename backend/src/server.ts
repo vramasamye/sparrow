@@ -22,7 +22,8 @@ import notificationRoutes from './routes/notifications'
 import reactionRoutes from './routes/reactions'
 import fileRoutes from './routes/files'
 import publicFileRoutes from './routes/publicFiles'
-import inviteRoutes from './routes/invites' // Import invite routes
+import inviteRoutes from './routes/invites'
+import notificationPreferenceRoutes from './routes/notificationPreferences' // Import new routes
 
 dotenv.config()
 
@@ -96,7 +97,8 @@ app.use('/api/messages', authMiddleware, messageRoutes)
 app.use('/api/users', authMiddleware, userRoutes)
 app.use('/api/notifications', authMiddleware, notificationRoutes)
 app.use('/api/workspaces/:workspaceId/files', authMiddleware, fileRoutes)
-app.use('/api/public-files', publicFileRoutes) // Mount public file routes (no general auth middleware)
+app.use('/api/public-files', publicFileRoutes)
+app.use('/api/notification-preferences', authMiddleware, notificationPreferenceRoutes); // Mount new routes
 
 // Socket.io handling
 socketHandler(io, app) // Pass app to socketHandler

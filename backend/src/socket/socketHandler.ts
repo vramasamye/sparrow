@@ -56,30 +56,34 @@ async function handleMentionsAndNotificationsSocket(
       }))
 
     if (notificationCreateData.length > 0) {
-      await db.notification.createMany({
-        data: notificationCreateData,
-      })
-
-      // Emit 'new_notification' to each mentioned user if they are online
-      for (const notification of notificationCreateData) {
-        const recipientSocketId = userSocketsMap?.get(notification.userId)
-        if (recipientSocketId) {
-          // Fetch the full notification object to send to the client
-          const fullNotification = await db.notification.findFirst({
-            where: {
-                messageId: notification.messageId,
-                userId: notification.userId,
-                type: 'mention'
-            },
-            orderBy: { createdAt: 'desc'}, // In case of duplicate for some reason
-            include: {
-                sender: { select: { id: true, username: true, name: true }},
-                message: { select: { id: true, content: true, channelId: true }},
-                channel: { select: { id: true, name: true }}
+      for (const notifData of notificationCreateData) {
+        // Check user's preference for this channel/workspace for mentions
+        const preference = await db.userNotificationPreference.findUnique({
+          where: {
+            userId_workspaceId_channelId: {
+              userId: notifData.userId,
+              workspaceId: workspaceId!, // workspaceId from function params
+              channelId: channelId!   // channelId from function params
             }
-          })
-          if (fullNotification) {
-            io.to(recipientSocketId).emit('new_notification', fullNotification)
+          }
+        });
+        // Default to "MENTIONS": if no pref, mentions notify unless channel is explicitly "NONE".
+        // If channel is "MENTIONS", mentions notify. If "ALL", mentions notify.
+        const setting = preference?.notificationSetting || "MENTIONS";
+
+        if (setting !== "NONE") {
+          const newNotification = await db.notification.create({
+            data: notifData,
+            include: { // Include details needed for the client notification
+              sender: { select: { id: true, username: true, name: true, avatar: true } },
+              message: { select: { id: true, content: true, channelId: true, workspaceId: true } },
+              channel: { select: { id: true, name: true, workspaceId: true } },
+            }
+          });
+
+          const recipientSocketId = userSocketsMap?.get(newNotification.userId);
+          if (recipientSocketId) {
+            io.to(recipientSocketId).emit('new_notification', newNotification);
           }
         }
       }
@@ -430,18 +434,40 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
 
           // DM notifications (using createdMessageInTransaction)
           if (createdMessageInTransaction.recipientId && userId !== createdMessageInTransaction.recipientId) {
-            const notification = await prisma.notification.create({
-              data: {
-                userId: createdMessageInTransaction.recipientId, type: 'new_dm', messageId: createdMessageInTransaction.id, senderId: userId,
-              },
-              include: {
-                sender: { select: { id: true, username: true, name: true } },
-                message: { select: { id: true, content: true, channelId: true, recipientId: true } },
-              },
-            });
-            const recipientSocketId = userSocketsMap?.get(createdMessageInTransaction.recipientId);
-            if (recipientSocketId) {
-              io.to(recipientSocketId).emit('new_notification', notification);
+            let recipientWorkspaceIdForDmPref = messageData.workspaceId; // Workspace context of the DM
+            if (!recipientWorkspaceIdForDmPref) {
+                // Fallback: find any workspace the recipient is in to check their DM preference for *a* workspace.
+                // This is still a simplification. Ideally, DMs have a clearer workspace context for prefs, or prefs are global.
+                const recipientMemberRecord = await prisma.member.findFirst({ where: {userId: createdMessageInTransaction.recipientId }});
+                if (recipientMemberRecord) recipientWorkspaceIdForDmPref = recipientMemberRecord.workspaceId;
+            }
+
+            let dmSetting = "ALL"; // Default to notify
+            if (recipientWorkspaceIdForDmPref) { // Only check if we have a workspace context for the preference
+                const dmPreference = await prisma.userNotificationPreference.findUnique({
+                  where: { userId_workspaceId_channelId: {
+                      userId: createdMessageInTransaction.recipientId,
+                      workspaceId: recipientWorkspaceIdForDmPref,
+                      channelId: null // DM preference
+                  }}
+                });
+                dmSetting = dmPreference?.notificationSetting || "ALL";
+            }
+
+            if (dmSetting !== "NONE") {
+              const notification = await prisma.notification.create({
+                data: {
+                  userId: createdMessageInTransaction.recipientId, type: 'new_dm', messageId: createdMessageInTransaction.id, senderId: userId,
+                },
+                include: {
+                  sender: { select: { id: true, username: true, name: true, avatar: true } },
+                  message: { select: { id: true, content: true, channelId: true, recipientId: true, workspaceId: true } },
+                },
+              });
+              const recipientSocketId = userSocketsMap?.get(createdMessageInTransaction.recipientId);
+              if (recipientSocketId) {
+                io.to(recipientSocketId).emit('new_notification', notification);
+              }
             }
           }
           messageIdForRefetch = createdMessageInTransaction.id; // Set ID for refetch
