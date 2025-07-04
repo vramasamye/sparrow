@@ -29,8 +29,13 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
   const [loading, setLoading] = useState(true)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const [openedThreadId, setOpenedThreadId] = useState<string | null>(null);
-  const [showChannelDetails, setShowChannelDetails] = useState(false); // State for panel visibility
+  const [showChannelDetails, setShowChannelDetails] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // State for editing channel description
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [editableDescription, setEditableDescription] = useState('');
+  const descriptionEditInputRef = useRef<HTMLTextAreaElement>(null);
 
   const {
     joinChannel,
@@ -50,6 +55,71 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
   const handleViewThread = (messageId: string) => {
     setOpenedThreadId(messageId);
   };
+
+  const handleStartEditDescription = () => {
+    setEditableDescription(channel?.description || '');
+    setIsEditingDescription(true);
+  };
+
+  const handleCancelEditDescription = () => {
+    setIsEditingDescription(false);
+    // setEditableDescription(''); // No need to clear, will be reset on next edit
+  };
+
+  const handleSaveDescription = async () => {
+    if (!channel || !session) return;
+    // Basic validation (e.g. length) can be added here if needed, or rely on backend
+    if (editableDescription.length > 255) {
+        alert("Description cannot exceed 255 characters.");
+        return;
+    }
+
+    const token = localStorage.getItem('token') || session.accessToken;
+    try {
+      const response = await fetch(`/api/workspaces/${channel.workspaceId}/channels/${channel.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ description: editableDescription }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to update description');
+      }
+      // Success: UI will update via socket event 'channel_updated' which triggers workspace refresh
+      setIsEditingDescription(false);
+    } catch (error: any) {
+      console.error("Failed to save description:", error);
+      alert(`Error: ${error.message}`); // Basic error feedback
+    }
+  };
+
+  // Auto-focus textarea when editing description starts
+  useEffect(() => {
+    if (isEditingDescription && descriptionEditInputRef.current) {
+      descriptionEditInputRef.current.focus();
+      descriptionEditInputRef.current.select(); // Select all text
+    }
+  }, [isEditingDescription]);
+
+  // Effect to handle external changes to channel description while editing
+  useEffect(() => {
+    if (isEditingDescription && channel?.description !== editableDescription) {
+      // If the actual channel description changes while user is editing,
+      // reset the editing state to show the latest version.
+      // Could also prompt user, but this is simpler.
+      setEditableDescription(channel?.description || '');
+      // Optionally, keep editing open with new base:
+      // setIsEditingDescription(true);
+      // Or, cancel edit to show the new description:
+      setIsEditingDescription(false);
+      // console.warn("Channel description was updated externally while editing. Edit cancelled."); // Removed for cleanup
+    }
+    // Only re-run if channel.description changes, not editableDescription itself.
+  }, [channel?.description, isEditingDescription]);
+
 
   useEffect(() => {
     if (channel?.id) {
@@ -294,11 +364,49 @@ export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin
             </button>
           </div>
         </div>
-        {channel.description && (
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">
-            {/* Icon for description can be added if desired */}
-            {channel.description}
-          </p>
+        {channel.description ? (
+          <div className="mt-1 flex items-start gap-1.5 group">
+            <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap break-words">
+              {channel.description}
+            </p>
+            {isCurrentUserAdmin && !isEditingDescription && (
+              <button
+                onClick={handleStartEditDescription}
+                className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-0.5 rounded ml-1 flex-shrink-0"
+                title="Edit description"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path></svg>
+              </button>
+            )}
+          </div>
+        ) : isCurrentUserAdmin && !isEditingDescription ? (
+           <button
+            onClick={handleStartEditDescription}
+            className="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+           >
+            + Add channel description
+           </button>
+        ) : null}
+
+        {isEditingDescription && (
+          <div className="mt-2">
+            <textarea
+              ref={descriptionEditInputRef}
+              value={editableDescription}
+              onChange={(e) => setEditableDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveDescription(); }
+                if (e.key === 'Escape') { handleCancelEditDescription(); }
+              }}
+              className="w-full text-xs p-1.5 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:ring-indigo-500 focus:border-indigo-500"
+              rows={2}
+              maxLength={255}
+            />
+            <div className="mt-1.5 flex items-center justify-end gap-2">
+              <button onClick={handleCancelEditDescription} className="px-2 py-1 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 rounded-md">Cancel</button>
+              <button onClick={handleSaveDescription} className="px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-md">Save</button>
+            </div>
+          </div>
         )}
       </div>
 

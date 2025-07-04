@@ -262,6 +262,60 @@ router.get('/:channelId/members', async (req: AuthenticatedRequest, res) => {
   }
 });
 
+// Update channel details (e.g., description) - ADMIN only for now
+router.put('/:channelId', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // from mergedParams
+    const { description } = req.body as { description?: string | null };
+    const currentUserId = req.user!.id;
+
+    if (description === undefined) {
+      return res.status(400).json({ error: 'No description provided for update.' });
+    }
+    if (description && description.length > 255) { // Example validation
+        return res.status(400).json({ error: 'Description cannot exceed 255 characters.'});
+    }
+
+
+    const channelToUpdate = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToUpdate) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToUpdate.workspaceId !== workspaceId) {
+      return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        description: description === "" ? null : description, // Allow clearing description
+      },
+      // Select all relevant fields that clients might need
+      select: {
+        id: true, name: true, description: true, isPrivate: true, isArchived: true,
+        workspaceId: true, createdAt: true, createdBy:true, archivedAt: true, archivedById: true
+      }
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} description updated by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Update channel description error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to update channel description.' });
+  }
+});
+
 // Unarchive a channel - ADMIN only
 router.put('/:channelId/unarchive', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
   try {
