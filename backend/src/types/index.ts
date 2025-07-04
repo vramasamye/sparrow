@@ -51,8 +51,22 @@ export interface AuthenticatedRequest extends Express.Request {
     email: string
     username: string
     name?: string
+    currentWorkspaceRole?: MemberRole | null; // Added for RBAC
   }
 }
+
+// This is the payload expected from decoding the JWT
+export interface UserPayload {
+  id: string;
+  email: string;
+  username: string;
+  name?: string;
+  // Add other fields that are in JWT, like iat, exp, etc., if needed by other parts of app
+}
+
+// Import MemberRole if not already globally available in types
+import { MemberRole } from '@prisma/client';
+
 
 export interface SocketUser {
   id: string

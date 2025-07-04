@@ -21,7 +21,9 @@ import userRoutes from './routes/users'
 import notificationRoutes from './routes/notifications'
 import reactionRoutes from './routes/reactions'
 import fileRoutes from './routes/files'
-import publicFileRoutes from './routes/publicFiles' // Import public file routes
+import publicFileRoutes from './routes/publicFiles'
+import inviteRoutes from './routes/invites'
+import notificationPreferenceRoutes from './routes/notificationPreferences' // Import new routes
 
 dotenv.config()
 
@@ -82,13 +84,21 @@ app.set('userSockets', new Map<string, string>()); // Initialize userSockets map
 
 // API routes
 app.use('/api/auth', authRoutes)
-app.use('/api/workspaces', authMiddleware, workspaceRoutes)
-app.use('/api/channels', authMiddleware, channelRoutes)
+app.use('/api/invites', inviteRoutes); // Invite routes (GET /:token is unauthenticated, POST /:token/accept needs auth)
+app.use('/api/workspaces', authMiddleware, workspaceRoutes) // This handles /api/workspaces and /api/workspaces/:workspaceId
+// Mount channelRoutes under /api/workspaces/:workspaceId/channels
+// Note: workspaceRoutes already handles /:workspaceId, so this needs to be integrated carefully OR
+// channelRoutes is mounted specifically.
+// For clarity, let's ensure workspaceRoutes does not also try to handle /:workspaceId/channels if we mount it separately.
+app.use('/api/workspaces/:workspaceId/channels', authMiddleware, channelRoutes); // New mount for channel routes
+// app.use('/api/channels', authMiddleware, channelRoutes) // Old one, to be removed or ensure it's gone
+
 app.use('/api/messages', authMiddleware, messageRoutes)
 app.use('/api/users', authMiddleware, userRoutes)
 app.use('/api/notifications', authMiddleware, notificationRoutes)
 app.use('/api/workspaces/:workspaceId/files', authMiddleware, fileRoutes)
-app.use('/api/public-files', publicFileRoutes) // Mount public file routes (no general auth middleware)
+app.use('/api/public-files', publicFileRoutes)
+app.use('/api/notification-preferences', authMiddleware, notificationPreferenceRoutes); // Mount new routes
 
 // Socket.io handling
 socketHandler(io, app) // Pass app to socketHandler

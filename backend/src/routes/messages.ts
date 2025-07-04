@@ -43,10 +43,21 @@ async function handleMentionsAndNotifications(message: any, senderId: string, wo
       }))
 
     if (notifications.length > 0) {
-      await db.notification.createMany({
-        data: notifications,
-      })
-      // TODO: Emit socket event for new notifications to these users
+      const notificationsToCreate = [];
+      for (const notifData of notifications) {
+        // Check user's preference for this channel/workspace for mentions
+        const preference = await db.userNotificationPreference.findUnique({
+          where: { userId_workspaceId_channelId: { userId: notifData.userId, workspaceId: workspaceId!, channelId: channelId! }}
+        });
+        // Default to "MENTIONS" if no specific preference, meaning mentions will notify unless explicitly set to "NONE"
+        const setting = preference?.notificationSetting || "MENTIONS";
+        if (setting !== "NONE") { // MENTIONS or ALL should get this mention notification
+          notificationsToCreate.push(notifData);
+        }
+      }
+      if (notificationsToCreate.length > 0) {
+        await db.notification.createMany({ data: notificationsToCreate });
+      }
     }
   }
   return { mentionedUserIds }
@@ -166,14 +177,44 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
 
       // 4. Create notification for direct message
       if (recipientId && userId !== recipientId) {
-        await prisma.notification.create({
-          data: {
-            userId: recipientId,
-            type: 'new_dm',
-            messageId: createdMessageInTransaction.id,
-            senderId: userId,
-          },
-        });
+        // Determine workspaceId for DM preference. This is tricky as DMs are not strictly workspace-bound in the Message model.
+        // Assuming a DM implies a mutual workspace or a primary workspace for the recipient.
+        // For now, we'll need a way to get a relevant workspaceId for the recipient to check their DM pref.
+        // This might involve fetching recipient's memberships if not available.
+        // Let's assume `messageData.workspaceId` is somehow populated for DMs too (e.g. from sender's current workspace context)
+        // OR we check a global DM preference if UserNotificationPreference supports null workspaceId (it doesn't currently).
+        // For this iteration, if workspaceId is not on messageData for a DM, we'll default to notify.
+        let recipientWorkspaceIdForDmPref = messageData.workspaceId;
+        if (!recipientWorkspaceIdForDmPref) {
+            // Attempt to find a common workspace or recipient's primary workspace. This is complex.
+            // Fallback: If no clear workspace context for DM, assume default notification behavior (notify).
+            // Or, a user could have a global "all DMs" setting not tied to a workspace.
+            // Current model: UserNotificationPreference IS workspace-scoped.
+            // This means DMs without a clear workspace context cannot use these preferences effectively yet.
+            // For now, if messageData.workspaceId is null for a DM, we will default to notify.
+            // A better model would link DMs to a workspace or have truly global notification settings.
+             const recipientMemberRecord = await prisma.member.findFirst({ where: {userId: recipientId }}); // find any workspace they are in
+             if (recipientMemberRecord) recipientWorkspaceIdForDmPref = recipientMemberRecord.workspaceId;
+        }
+
+        let dmSetting = "ALL"; // Default to notify for DMs
+        if (recipientWorkspaceIdForDmPref) {
+            const dmPreference = await prisma.userNotificationPreference.findUnique({
+              where: { userId_workspaceId_channelId: { userId: recipientId, workspaceId: recipientWorkspaceIdForDmPref, channelId: null } }
+            });
+            dmSetting = dmPreference?.notificationSetting || "ALL";
+        }
+
+        if (dmSetting !== "NONE") {
+          await prisma.notification.create({
+            data: {
+              userId: recipientId,
+              type: 'new_dm',
+              messageId: createdMessageInTransaction.id,
+              senderId: userId,
+            },
+          });
+        }
       }
 
       // 5. Link attachments if provided

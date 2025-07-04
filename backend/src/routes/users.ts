@@ -291,4 +291,94 @@ router.get('/conversations', async (req: AuthenticatedRequest, res) => {
   }
 })
 
+// Set/Update current user's custom status
+router.put('/me/status', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const { text, emoji } = req.body as { text?: string | null, emoji?: string | null };
+
+    // Basic validation (e.g., length limits)
+    if (text && text.length > 100) {
+      return res.status(400).json({ error: 'Status text cannot exceed 100 characters.' });
+    }
+    if (emoji && emoji.length > 5) { // Arbitrary length for emoji or alias
+        return res.status(400).json({ error: 'Status emoji seems too long.' });
+    }
+
+    const updatedUser = await db.user.update({
+      where: { id: userId },
+      data: {
+        customStatusText: text === undefined ? undefined : (text === "" ? null : text), // Allow clearing with "" or null
+        customStatusEmoji: emoji === undefined ? undefined : (emoji === "" ? null : emoji),
+      },
+      select: { id: true, username: true, customStatusText: true, customStatusEmoji: true } // Return relevant fields
+    });
+
+    // Broadcast user_status_updated to all workspaces the user is a member of
+    const io = req.app.get('io');
+    if (io) {
+      const memberships = await db.member.findMany({
+        where: { userId },
+        select: { workspaceId: true }
+      });
+      memberships.forEach(membership => {
+        io.to(`workspace:${membership.workspaceId}`).emit('user_status_updated', {
+          userId: updatedUser.id,
+          customStatusText: updatedUser.customStatusText,
+          customStatusEmoji: updatedUser.customStatusEmoji,
+        });
+      });
+    }
+
+    logger.info(`User ${userId} updated status: Text='${updatedUser.customStatusText}', Emoji='${updatedUser.customStatusEmoji}'`);
+    res.json({
+      customStatusText: updatedUser.customStatusText,
+      customStatusEmoji: updatedUser.customStatusEmoji
+    });
+
+  } catch (error) {
+    logger.error(`Update user status error for user ${req.user?.id}:`, error);
+    res.status(500).json({ error: 'Failed to update user status.' });
+  }
+});
+
+// Clear current user's custom status
+router.delete('/me/status', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.user!.id;
+
+    await db.user.update({
+      where: { id: userId },
+      data: {
+        customStatusText: null,
+        customStatusEmoji: null,
+      }
+    });
+
+    // Broadcast user_status_updated
+    const io = req.app.get('io');
+    if (io) {
+      const memberships = await db.member.findMany({
+        where: { userId },
+        select: { workspaceId: true }
+      });
+      memberships.forEach(membership => {
+        io.to(`workspace:${membership.workspaceId}`).emit('user_status_updated', {
+          userId: userId,
+          customStatusText: null,
+          customStatusEmoji: null,
+        });
+      });
+    }
+
+    logger.info(`User ${userId} cleared status.`);
+    res.status(200).json({ message: 'Status cleared successfully.' });
+
+  } catch (error) {
+    logger.error(`Clear user status error for user ${req.user?.id}:`, error);
+    res.status(500).json({ error: 'Failed to clear user status.' });
+  }
+});
+
+
 export default router

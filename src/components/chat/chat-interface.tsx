@@ -9,7 +9,8 @@ import { UserSearch } from './user-search'
 import { NotificationBell } from '../notifications/notification-bell'
 import { NotificationPanel } from '../notifications/notification-panel'
 import { useSocket } from '@/hooks/useSocket'
-import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import helpers
+import { getAvatarUrl, getInitials } from '@/utils/displayUtils';
+import { PresenceProvider } from '@/contexts/PresenceContext'; // Import PresenceProvider
 
 
 // Define Notification type structure - ideally import from a shared types file
@@ -29,28 +30,41 @@ interface ChatInterfaceProps {
   workspaces: any[]
   onWorkspaceChange: (workspace: any) => void
   onCreateWorkspace: () => void
+  onRefreshWorkspaces?: () => void; // New prop
 }
 
 export function ChatInterface({ 
   workspace, 
   workspaces, 
   onWorkspaceChange, 
-  onCreateWorkspace 
+  onCreateWorkspace,
+  onRefreshWorkspaces // New prop
 }: ChatInterfaceProps) {
   const { data: session } = useSession()
   const [currentChannel, setCurrentChannel] = useState(null)
   const [currentDM, setCurrentDM] = useState(null)
   const [showUserSearch, setShowUserSearch] = useState(false)
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
-  const [unreadDmSenders, setUnreadDmSenders] = useState<Set<string>>(new Set()); // Track senders of unread DMs
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0) // This is for the main bell, still needed
+  // const [unreadDmSenders, setUnreadDmSenders] = useState<Set<string>>(new Set()); // Removed, NotificationContext handles this
   const {
     joinWorkspace,
     isConnected,
     onNewNotification,
-    onUserJoinedChannel, // New
-    onUserLeftChannel   // New
-  } = useSocket()
+    onUserJoinedChannel,
+    onUserLeftChannel,
+    onAddedToChannelHook,
+    onRemovedFromChannelHook,
+    onChannelUpdated
+  } = useSocket();
+  const { presences } = usePresence();
+  const { unreadNotifications, markNotificationsAsReadForContext: markChannelOrDmAsRead } = useNotificationContext(); // Get full list for filtering
+
+  const currentUserMemberInfo = workspace?.members?.find((m: any) => m.userId === session?.user?.id);
+  const isCurrentUserAdmin = currentUserMemberInfo?.role === 'ADMIN';
+  const currentUserRole = currentUserMemberInfo?.role || null;
+  const currentUserPresence = session?.user?.id ? presences.get(session.user.id) : null;
+
 
   // Fetch initial notifications and unread count
   const fetchInitialNotifications = async () => {
@@ -76,14 +90,14 @@ export function ChatInterface({
     if (!onNewNotification) return;
 
     const cleanup = onNewNotification((notification: Notification) => {
-      setUnreadNotificationCount(prev => prev + 1);
+      setUnreadNotificationCount(prev => prev + 1); // This still updates the main bell count
 
-      if (notification.type === 'new_dm' && notification.sender?.id) {
-        // Only add if the DM is not currently open with that sender
-        if (currentDM?.id !== notification.sender.id) {
-          setUnreadDmSenders(prev => new Set(prev).add(notification.sender.id));
-        }
-      }
+      // Logic for unreadDmSenders is now handled by NotificationContext
+      // if (notification.type === 'new_dm' && notification.sender?.id) {
+      //   if (currentDM?.id !== notification.sender.id) {
+      //     setUnreadDmSenders(prev => new Set(prev).add(notification.sender.id));
+      //   }
+      // }
 
       // Optionally, trigger a browser notification
       if (Notification.permission === "granted") {
@@ -149,7 +163,100 @@ export function ChatInterface({
       joinedCleanup();
       leftCleanup();
     };
-  }, [onUserJoinedChannel, onUserLeftChannel, workspace, session?.user?.id, currentChannel?.id, handleChannelSelect]); // Added handleChannelSelect to dependencies
+  }, [onUserJoinedChannel, onUserLeftChannel, workspace, session?.user?.id, currentChannel?.id, handleChannelSelect]);
+
+  // Listen for current user being added/removed from channels
+  useEffect(() => {
+    if (!session?.user?.id || !workspace?.id) return;
+
+    const addedCleanup = onAddedToChannelHook?.((data) => {
+      // data: { channelId, channelName, workspaceId, addedByUsername }
+      if (data.workspaceId === workspace.id) {
+        alert(`You've been added to channel #${data.channelName} by ${data.addedByUsername}.`);
+        // Refresh workspace data to update channel list in sidebar
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+      }
+    });
+
+    const removedCleanup = onRemovedFromChannelHook?.((data) => {
+      // data: { channelId, channelName, workspaceId, removedByUsername }
+      if (data.workspaceId === workspace.id) {
+        alert(`You've been removed from channel #${data.channelName} by ${data.removedByUsername}.`);
+        if (currentChannel?.id === data.channelId) {
+          // If removed from current channel, navigate away
+          const generalChannel = workspace.channels?.find((ch:any) => ch.name === 'general') || workspace.channels?.[0];
+          if (generalChannel) {
+            handleChannelSelect(generalChannel);
+          } else {
+            setCurrentChannel(null); // No other channels, clear current channel view
+            setCurrentDM(null); // Also clear DM view
+          }
+        }
+        // Refresh workspace data to update channel list in sidebar
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+      }
+    });
+
+    return () => {
+      addedCleanup?.();
+      removedCleanup?.();
+    };
+  }, [
+    session?.user?.id,
+    workspace?.id,
+    workspace?.channels,
+    currentChannel?.id,
+    onAddedToChannelHook,
+    onRemovedFromChannelHook,
+    onRefreshWorkspaces,
+    handleChannelSelect
+  ]);
+
+  // Listen for channel updates (e.g., archive/unarchive)
+  useEffect(() => {
+    if (!workspace?.id || !onChannelUpdated) return;
+
+    const cleanupChannelUpdated = onChannelUpdated((updatedChannelData: any) => {
+      // data: { id, name, isArchived, isPrivate, workspaceId, ... }
+      if (updatedChannelData.workspaceId === workspace.id) {
+        // console.log("Channel updated in current workspace:", updatedChannelData); // Keep for debug if needed, or remove for prod
+        // This is where the UI needs to react.
+        // 1. Sidebar list needs to update (show/hide channel from active list).
+        //    The simplest way is to refresh all workspace data.
+        if (onRefreshWorkspaces) {
+          onRefreshWorkspaces();
+        } else {
+          window.location.reload(); // Fallback
+        }
+
+        // 2. If the currentChannel is the one updated:
+        if (currentChannel?.id === updatedChannelData.id) {
+          // If it was archived and user is viewing it, MessageArea will show banner.
+          // If it was unarchived, MessageArea will hide banner/enable composer.
+          // This might require currentChannel state to be updated with new channel data.
+          // The onRefreshWorkspaces should handle updating the `workspace` prop, which in turn
+          // should update `currentChannel` if it's derived from `workspace.channels`.
+          // For now, rely on the refresh to update the `channel` prop for MessageArea.
+          // An explicit setCurrentChannel(updatedChannelData) might be needed if refresh is too slow or complex.
+
+          // If current channel is archived, and user is not admin, maybe navigate away?
+          // For now, MessageArea handles its own read-only state based on channel.isArchived.
+        }
+      }
+    });
+    return () => {
+      cleanupChannelUpdated?.();
+    };
+  }, [workspace?.id, onChannelUpdated, onRefreshWorkspaces, currentChannel?.id]);
+
 
   const handleMarkNotificationAsRead = async (notificationId: string) => {
     if (!session) return;
@@ -214,33 +321,37 @@ export function ChatInterface({
     }
   }, [workspace?.id, isConnected, joinWorkspace])
 
+  const { markNotificationsAsReadForContext: markDmAsRead } = useNotificationContext(); // Get context method
+
   const handleDirectMessage = async (user: any) => {
     setCurrentChannel(null)
     setCurrentDM(user)
 
-    // Clear unread DM sender indicator for this user
-    setUnreadDmSenders(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(user.id);
-      return newSet;
-    });
+    // Clear unread DM sender indicator for this user via NotificationContext
+    markDmAsRead(user.id, 'dm');
+
 
     // Mark actual 'new_dm' notifications from this user as read on the backend
     if (session) {
       try {
         // First, fetch unread 'new_dm' notifications from this specific sender
+        // This API call to fetch and then mark read is still valid for backend.
+        // The NotificationContext update is for client-side immediate feedback on counts.
         const response = await fetch(`/api/notifications?status=unread&type=new_dm&senderId=${user.id}`, {
             headers: { 'Authorization': `Bearer ${session.accessToken}` }
         });
         if (response.ok) {
             const { notifications: dmNotificationsToRead } = await response.json();
             for (const notif of dmNotificationsToRead) {
-                if (notif.sender.id === user.id) { // Double check sender
+                if (notif.sender.id === user.id) {
                     await fetch(`/api/notifications/${notif.id}/read`, {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${session.accessToken}` }
                     });
-                    // Decrement global unread count as these are marked read
+                    // Global unread count for the bell still needs decrementing here
+                    // as NotificationContext's markAsRead might not affect NotificationBell's total directly
+                    // unless NotificationBell also uses NotificationContext for its total.
+                    // For now, let NotificationBell manage its total and ChatInterface manage its part.
                     setUnreadNotificationCount(prev => Math.max(0, prev - 1));
                 }
             }
@@ -257,11 +368,12 @@ export function ChatInterface({
   }
 
   return (
-    <div className="flex h-screen bg-slate-900">
-      {/* Left Sidebar */}
-      <div className="w-72 bg-slate-900 text-white flex flex-col shadow-2xl">
-        {/* Workspace Header */}
-        <div className="p-4 border-b border-slate-700 bg-slate-800">
+    <PresenceProvider workspaceId={workspace?.id}>
+      <div className="flex h-screen bg-slate-900"> {/* This is the main app container for chat */}
+        {/* Left Sidebar */}
+        <div className="w-72 bg-slate-900 text-white flex flex-col shadow-2xl"> {/* Sidebar specific bg */}
+          {/* Workspace Header */}
+          <div className="p-4 border-b border-slate-700 bg-slate-800"> {/* Sidebar header specific bg */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
@@ -305,16 +417,23 @@ export function ChatInterface({
 +        <Sidebar
           workspace={workspace}
           currentChannel={currentChannel}
-          currentDM={currentDM} // Pass currentDM
-          unreadDmSenders={unreadDmSenders} // Pass unreadDmSenders
+          currentDM={currentDM}
+          // unreadDmSenders={unreadDmSenders} // Removed, NotificationContext handles this
+          isCurrentUserAdmin={isCurrentUserAdmin}
+          currentUserRole={currentUserRole}
           onChannelSelect={handleChannelSelect}
           onChannelCreated={(channel) => {
             // Refresh workspace data or add channel to state
-            window.location.reload() // Simple refresh for now
+            // For now, channel creation also reloads. This could be refined similarly.
+            window.location.reload()
           }}
-          onMemberInvited={(member) => {
-            // Refresh workspace data or add member to state
-            window.location.reload() // Simple refresh for now
+          onMemberInvited={(member) => { // This 'member' is the invited user/member object
+            if (onRefreshWorkspaces) {
+              onRefreshWorkspaces();
+            } else {
+              // Fallback if no refresh function is provided (though it should be)
+              window.location.reload();
+            }
           }}
           onDirectMessage={handleDirectMessage}
         />
@@ -341,12 +460,21 @@ export function ChatInterface({
               <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-slate-800 rounded-full ${isConnected ? 'bg-green-400' : 'bg-slate-500'}`}></div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-white">
-                {session?.user?.name || session?.user?.username}
+              <p className="text-sm font-medium truncate text-white flex items-center">
+                <span>{session?.user?.name || session?.user?.username}</span>
+                {currentUserPresence?.customStatusEmoji && (
+                  <span className="ml-1.5 text-xs" title={currentUserPresence?.customStatusText || ''}>
+                    {currentUserPresence.customStatusEmoji}
+                  </span>
+                )}
               </p>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                <span className="text-xs text-slate-400">Online</span>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full ${ (isConnected && currentUserPresence?.isOnline) ? 'bg-green-400' : 'bg-slate-500'}`}></div>
+                <span className="text-xs text-slate-400 truncate" title={currentUserPresence?.customStatusText || ''}>
+                  {(isConnected && currentUserPresence?.isOnline)
+                    ? (currentUserPresence?.customStatusText || 'Online')
+                    : (currentUserPresence?.lastSeenAt ? `Last seen ${new Date(currentUserPresence.lastSeenAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` : 'Offline')}
+                </span>
               </div>
             </div>
           </div>
@@ -356,7 +484,11 @@ export function ChatInterface({
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white">
         {currentChannel ? (
-          <MessageArea channel={currentChannel} workspaceMembers={workspace?.members || []} />
+          <MessageArea
+            channel={currentChannel}
+            workspaceMembers={workspace?.members || []}
+            isCurrentUserAdmin={isCurrentUserAdmin} // Pass admin status
+          />
         ) : currentDM ? (
           <DirectMessageArea 
             otherUser={currentDM} 
@@ -403,5 +535,6 @@ export function ChatInterface({
         // Pass session or token if NotificationPanel makes its own API calls
       />
     </div>
+  </PresenceProvider>
   )
 }

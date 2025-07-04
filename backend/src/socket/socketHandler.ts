@@ -56,30 +56,34 @@ async function handleMentionsAndNotificationsSocket(
       }))
 
     if (notificationCreateData.length > 0) {
-      await db.notification.createMany({
-        data: notificationCreateData,
-      })
-
-      // Emit 'new_notification' to each mentioned user if they are online
-      for (const notification of notificationCreateData) {
-        const recipientSocketId = userSocketsMap?.get(notification.userId)
-        if (recipientSocketId) {
-          // Fetch the full notification object to send to the client
-          const fullNotification = await db.notification.findFirst({
-            where: {
-                messageId: notification.messageId,
-                userId: notification.userId,
-                type: 'mention'
-            },
-            orderBy: { createdAt: 'desc'}, // In case of duplicate for some reason
-            include: {
-                sender: { select: { id: true, username: true, name: true }},
-                message: { select: { id: true, content: true, channelId: true }},
-                channel: { select: { id: true, name: true }}
+      for (const notifData of notificationCreateData) {
+        // Check user's preference for this channel/workspace for mentions
+        const preference = await db.userNotificationPreference.findUnique({
+          where: {
+            userId_workspaceId_channelId: {
+              userId: notifData.userId,
+              workspaceId: workspaceId!, // workspaceId from function params
+              channelId: channelId!   // channelId from function params
             }
-          })
-          if (fullNotification) {
-            io.to(recipientSocketId).emit('new_notification', fullNotification)
+          }
+        });
+        // Default to "MENTIONS": if no pref, mentions notify unless channel is explicitly "NONE".
+        // If channel is "MENTIONS", mentions notify. If "ALL", mentions notify.
+        const setting = preference?.notificationSetting || "MENTIONS";
+
+        if (setting !== "NONE") {
+          const newNotification = await db.notification.create({
+            data: notifData,
+            include: { // Include details needed for the client notification
+              sender: { select: { id: true, username: true, name: true, avatar: true } },
+              message: { select: { id: true, content: true, channelId: true, workspaceId: true } },
+              channel: { select: { id: true, name: true, workspaceId: true } },
+            }
+          });
+
+          const recipientSocketId = userSocketsMap?.get(newNotification.userId);
+          if (recipientSocketId) {
+            io.to(recipientSocketId).emit('new_notification', newNotification);
           }
         }
       }
@@ -170,43 +174,75 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     if (userSocketsMap) {
         userSocketsMap.set(socket.data.user.id, socket.id);
     }
+    // Update lastSeenAt on connection
+    db.user.update({
+        where: { id: socket.data.user.id },
+        data: { lastSeenAt: new Date() }
+    }).catch(err => logger.error(`Failed to update lastSeenAt for user ${socket.data.user.id} on connect:`, err));
+
 
     // Join workspace room
     socket.on('join_workspace', async (workspaceId: string) => {
       try {
-        // Verify user is member of workspace
+        const currentUser = socket.data.user;
         const membership = await db.member.findFirst({
-          where: {
-            workspaceId,
-            userId: socket.data.user.id
-          }
-        })
+          where: { workspaceId, userId: currentUser.id }
+        });
 
         if (!membership) {
-          socket.emit('error', { message: 'Not authorized to join this workspace' })
-          return
+          socket.emit('error', { message: 'Not authorized to join this workspace' });
+          return;
         }
 
-        socket.join(`workspace:${workspaceId}`)
+        socket.join(`workspace:${workspaceId}`);
         
-        // Update user's current workspace
-        const user = connectedUsers.get(socket.id)
-        if (user) {
-          user.workspaceId = workspaceId
-          connectedUsers.set(socket.id, user)
+        const userRecord = await db.user.findUnique({ // Fetch user for custom status
+            where: { id: currentUser.id },
+            select: { customStatusText: true, customStatusEmoji: true }
+        });
+
+        const connectedUserData = connectedUsers.get(socket.id);
+        if (connectedUserData) {
+          connectedUserData.workspaceId = workspaceId;
+          connectedUsers.set(socket.id, connectedUserData);
         }
 
         // Notify other users in workspace about user coming online
         socket.to(`workspace:${workspaceId}`).emit('user_online', {
-          userId: socket.data.user.id,
-          username: socket.data.user.username,
-          name: socket.data.user.name
-        })
+          userId: currentUser.id,
+          username: currentUser.username,
+          name: currentUser.name,
+          customStatusText: userRecord?.customStatusText,
+          customStatusEmoji: userRecord?.customStatusEmoji,
+        });
 
-        logger.info(`User ${socket.data.user.username} joined workspace ${workspaceId}`)
+        // Send current presence state of the workspace to the joining user
+        const workspaceUsersData: Array<{userId: string, username: string, name?: string | null, isOnline: boolean, customStatusText?: string | null, customStatusEmoji?: string | null, lastSeenAt?: string | null}> = [];
+        const membersOfWorkspace = await db.member.findMany({
+            where: { workspaceId },
+            include: { user: { select: { id: true, username: true, name: true, customStatusText: true, customStatusEmoji: true, lastSeenAt: true }}}
+        });
+
+        for (const member of membersOfWorkspace) {
+            if (member.userId !== currentUser.id) { // Don't send self-presence in initial dump
+                const isOnline = !!userSocketsMap?.has(member.userId); // Check if user has an active socket
+                workspaceUsersData.push({
+                    userId: member.userId,
+                    username: member.user.username,
+                    name: member.user.name,
+                    isOnline: isOnline,
+                    customStatusText: member.user.customStatusText,
+                    customStatusEmoji: member.user.customStatusEmoji,
+                    lastSeenAt: isOnline ? null : member.user.lastSeenAt?.toISOString() ?? null // Only send lastSeenAt if offline
+                });
+            }
+        }
+        socket.emit('workspace_presence_state', { workspaceId, users: workspaceUsersData });
+
+        logger.info(`User ${currentUser.username} joined workspace ${workspaceId}`);
       } catch (error) {
-        logger.error('Join workspace error:', error)
-        socket.emit('error', { message: 'Failed to join workspace' })
+        logger.error('Join workspace error:', error);
+        socket.emit('error', { message: 'Failed to join workspace' });
       }
     })
 
@@ -354,14 +390,7 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
             });
           }
 
-          createdMessageInTransaction = await prisma.message.update({ // Renamed from finalMessage to createdMessageInTransaction
-            where: { id: createdMessage.id },
-            data: { threadId: createdMessage.id },
-            include: { user: { select: { id: true, username: true, name: true } } },
-          });
-        } else {
-          createdMessageInTransaction = createdMessage; // Use if already a reply
-        }
+          createdMessageInTransaction = createdMessage;
 
           // Handle mentions
           if (createdMessageInTransaction.channelId) {
@@ -398,18 +427,40 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
 
           // DM notifications (using createdMessageInTransaction)
           if (createdMessageInTransaction.recipientId && userId !== createdMessageInTransaction.recipientId) {
-            const notification = await prisma.notification.create({
-              data: {
-                userId: createdMessageInTransaction.recipientId, type: 'new_dm', messageId: createdMessageInTransaction.id, senderId: userId,
-              },
-              include: {
-                sender: { select: { id: true, username: true, name: true } },
-                message: { select: { id: true, content: true, channelId: true, recipientId: true } },
-              },
-            });
-            const recipientSocketId = userSocketsMap?.get(createdMessageInTransaction.recipientId);
-            if (recipientSocketId) {
-              io.to(recipientSocketId).emit('new_notification', notification);
+            let recipientWorkspaceIdForDmPref = messageData.workspaceId; // Workspace context of the DM
+            if (!recipientWorkspaceIdForDmPref) {
+                // Fallback: find any workspace the recipient is in to check their DM preference for *a* workspace.
+                // This is still a simplification. Ideally, DMs have a clearer workspace context for prefs, or prefs are global.
+                const recipientMemberRecord = await prisma.member.findFirst({ where: {userId: createdMessageInTransaction.recipientId }});
+                if (recipientMemberRecord) recipientWorkspaceIdForDmPref = recipientMemberRecord.workspaceId;
+            }
+
+            let dmSetting = "ALL"; // Default to notify
+            if (recipientWorkspaceIdForDmPref) { // Only check if we have a workspace context for the preference
+                const dmPreference = await prisma.userNotificationPreference.findUnique({
+                  where: { userId_workspaceId_channelId: {
+                      userId: createdMessageInTransaction.recipientId,
+                      workspaceId: recipientWorkspaceIdForDmPref,
+                      channelId: null // DM preference
+                  }}
+                });
+                dmSetting = dmPreference?.notificationSetting || "ALL";
+            }
+
+            if (dmSetting !== "NONE") {
+              const notification = await prisma.notification.create({
+                data: {
+                  userId: createdMessageInTransaction.recipientId, type: 'new_dm', messageId: createdMessageInTransaction.id, senderId: userId,
+                },
+                include: {
+                  sender: { select: { id: true, username: true, name: true, avatar: true } },
+                  message: { select: { id: true, content: true, channelId: true, recipientId: true, workspaceId: true } },
+                },
+              });
+              const recipientSocketId = userSocketsMap?.get(createdMessageInTransaction.recipientId);
+              if (recipientSocketId) {
+                io.to(recipientSocketId).emit('new_notification', notification);
+              }
             }
           }
           messageIdForRefetch = createdMessageInTransaction.id; // Set ID for refetch
@@ -483,97 +534,6 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
       } catch (error) {
         logger.error('Send message error (socket):', error)
         socket.emit('error', { message: 'Failed to send message: ' + (error as Error).message })
-      }
-    })
-
-    // Handle typing indicators for Channels
-    socket.on('start_typing', async (data: { channelId: string }) => {
-      try {
-        const { channelId } = data
-        const currentUser = socket.data.user;
-
-        // Verify user is member of channel
-            io,
-            app, // Pass app
-            createdMessage,
-            userId,
-            channel.workspaceId,
-            channelId
-          )
-
-          // 3. Update message with mentionedUserIds if any
-          if (mentionedUserIds.length > 0) {
-            createdMessage = await db.message.update({
-              where: { id: createdMessage.id },
-              data: { mentionedUserIds: mentionedUserIds.join(',') },
-              include: { user: { select: { id: true, username: true, name: true } } },
-            })
-          }
-
-          message = createdMessage // Use the potentially updated message
-
-          // Broadcast to channel members
-          io.to(`channel:${channelId}`).emit('new_message', {
-            id: message.id,
-            content: message.content,
-            userId: message.userId,
-            channelId: message.channelId,
-            workspaceId: message.workspaceId,
-            mentionedUserIds: message.mentionedUserIds,
-            createdAt: message.createdAt.toISOString(),
-            user: message.user,
-          })
-
-        } else if (recipientId) {
-          // Direct message
-          message = await db.message.create({
-            data: { content, userId, recipientId },
-            include: { user: { select: { id: true, username: true, name: true } } },
-          })
-
-          const messageData: MessageData = {
-            id: message.id,
-            content: message.content,
-            userId: message.userId,
-            recipientId: message.recipientId,
-            createdAt: message.createdAt.toISOString(),
-            user: message.user,
-          }
-
-          // Send to sender
-          socket.emit('new_direct_message', messageData)
-
-          // Send to recipient if online
-          const recipientSocketId = userSocketsMap?.get(recipientId)
-          if (recipientSocketId) {
-            io.to(recipientSocketId).emit('new_direct_message', messageData)
-
-            // Create and emit notification for DM
-            if (userId !== recipientId) {
-              const notification = await db.notification.create({
-                data: {
-                  userId: recipientId,
-                  type: 'new_dm',
-                  messageId: message.id,
-                  senderId: userId,
-                },
-                include: {
-                    sender: { select: { id: true, username: true, name: true }},
-                    message: { select: { id: true, content: true, channelId: true, recipientId: true }},
-                }
-              })
-              io.to(recipientSocketId).emit('new_notification', notification)
-            }
-          }
-        } else {
-            socket.emit('error', { message: 'Message target (channelId or recipientId) is required.'})
-            return
-        }
-
-        logger.info(`Message sent by ${senderUser.username} to ${channelId ? `channel ${channelId}` : `user ${recipientId}`}`)
-      } catch (error) {
-        logger.error('Send message error:', error)
-        socket.emit('error', { message: 'Failed to send message' })
       }
     })
 
@@ -660,22 +620,42 @@ export const socketHandler = (io: Server, app: Express) => { // Add app paramete
     });
 
     // Handle disconnect
-    socket.on('disconnect', () => {
-      logger.info(`User disconnected: ${socket.data.user.username} (${socket.id})`)
+    socket.on('disconnect', async () => { // Made async
+      const disconnectedUser = socket.data.user;
+      if (!disconnectedUser) return;
 
-      const user = connectedUsers.get(socket.id)
-      if (user && user.workspaceId) {
+      logger.info(`User disconnected: ${disconnectedUser.username} (${socket.id})`)
+
+      // Update lastSeenAt on disconnect
+      try {
+        await db.user.update({
+          where: { id: disconnectedUser.id },
+          data: { lastSeenAt: new Date() }
+        });
+      } catch (err) {
+        logger.error(`Failed to update lastSeenAt for user ${disconnectedUser.id} on disconnect:`, err);
+      }
+
+      const connectedUserData = connectedUsers.get(socket.id);
+      if (connectedUserData && connectedUserData.workspaceId) {
         // Notify other users in workspace about user going offline
-        socket.to(`workspace:${user.workspaceId}`).emit('user_offline', {
-          userId: user.id,
-          username: user.username
-        })
+        // Include custom status if available, as user_online does.
+        // However, custom status might not be relevant for "offline" as much,
+        // but sending it makes user_online/user_offline payloads more consistent.
+        // For offline, custom status might be implicitly cleared or ignored by client.
+        socket.to(`workspace:${connectedUserData.workspaceId}`).emit('user_offline', {
+          userId: disconnectedUser.id,
+          username: disconnectedUser.username,
+          name: disconnectedUser.name, // Assuming name is on disconnectedUser (socket.data.user)
+          // customStatusText: userRecord?.customStatusText, // Need to fetch or have it on socket.data.user
+          // customStatusEmoji: userRecord?.customStatusEmoji,
+        });
       }
 
       // Remove user from connected users
-      connectedUsers.delete(socket.id)
+      connectedUsers.delete(socket.id);
       if (userSocketsMap) {
-        userSocketsMap.delete(socket.data.user.id);
+        userSocketsMap.delete(disconnectedUser.id);
       }
     })
 

@@ -9,39 +9,56 @@ import { getAvatarUrl, getInitials } from '@/utils/displayUtils'; // Import help
 interface SidebarProps {
   workspace: any
   currentChannel: any
-  currentDM: any // Added currentDM
-  unreadDmSenders: Set<string> // Added unreadDmSenders
+  currentDM: any
+  // unreadDmSenders: Set<string> // This will be replaced by NotificationContext
+  isCurrentUserAdmin?: boolean;
+  currentUserRole?: MemberRole | null;
   onChannelSelect: (channel: any) => void
   onChannelCreated: (channel: any) => void
   onMemberInvited: (member: any) => void
   onDirectMessage: (user: any) => void
 }
 
-import { useEffect } from 'react'; // Added useEffect
-import { useSession } from 'next-auth/react'; // Added useSession
+// import { useEffect } from 'react'; // Already imported via useState etc.
+// import { useSession } from 'next-auth/react'; // Already imported
+// import { MemberRole } from '@prisma/client'; // Already imported
+// import { usePresence } from '@/contexts/PresenceContext'; // Already imported
+// import { useNotificationContext } from '@/contexts/NotificationContext'; // Already imported
 
 interface DMConversation {
   user: {
     id: string;
     username: string;
     name?: string;
-    avatar?: string; // Assuming avatar might be part of user object
+    avatar?: string;
   };
   lastMessage: {
     id: string;
     content: string;
     createdAt: string;
-    userId: string; // ID of the sender of the last message
-    user?: { username: string }; // Sender of the last message
+    userId: string;
+    user?: { username: string };
   } | null;
 }
 
-export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelCreated, onMemberInvited, onDirectMessage }: SidebarProps) {
+export function Sidebar({
+  workspace,
+  currentChannel,
+  currentDM, // Make sure this is destructured
+  isCurrentUserAdmin,
+  currentUserRole,
+  onChannelSelect,
+  onChannelCreated,
+  onMemberInvited,
+  onDirectMessage
+}: SidebarProps) {
   const [showCreateChannel, setShowCreateChannel] = useState(false)
   const [showInviteUser, setShowInviteUser] = useState(false)
   const [dmConversations, setDmConversations] = useState<DMConversation[]>([])
   const [loadingDMs, setLoadingDMs] = useState(true)
   const { data: session } = useSession()
+  const { presences } = usePresence();
+  const { unreadCounts } = useNotificationContext(); // Get unread counts
 
 
   useEffect(() => {
@@ -74,6 +91,38 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
     // or by refetching when ChatInterface's currentDM changes.
   }, [session]);
 
+  const handleRoleChange = async (targetUserId: string, newRole: MemberRole) => {
+    if (!session || !workspace?.id || !isCurrentUserAdmin) return;
+
+    const token = localStorage.getItem('token') || session.accessToken;
+    try {
+      const response = await fetch(`/api/workspaces/${workspace.id}/members/${targetUserId}/role`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to update role");
+      }
+      // Success - ideally, workspace data should refresh to reflect the change.
+      // For now, an alert and then relying on a future full refresh or manual refresh.
+      alert(`Role for user ${targetUserId} updated to ${newRole}. Please refresh if not immediately visible.`);
+      // TODO: Implement a workspace data refresh mechanism instead of alert/reload
+      // e.g., call a prop like `onWorkspaceDataNeededRefresh()`
+      // Forcing a reload for now to see changes:
+      window.location.reload();
+
+    } catch (error: any) {
+      console.error("Failed to change role:", error);
+      alert(`Error changing role: ${error.message}`);
+    }
+  };
+
 
   const handleChannelCreated = (channel: any) => {
     onChannelCreated(channel)
@@ -96,15 +145,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             </svg>
             Channels
           </h3>
-          <button 
-            onClick={() => setShowCreateChannel(true)}
-            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
-            title="Create channel"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-          </button>
+          {currentUserRole && currentUserRole !== MemberRole.GUEST && (
+            <button
+              onClick={() => setShowCreateChannel(true)}
+              className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
+              title="Create channel"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </button>
+          )}
         </div>
         
         <div className="space-y-1">
@@ -112,21 +163,32 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             <button
               key={channel.id}
               onClick={() => onChannelSelect(channel)}
-              className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors group ${ // py-1.5 for density, rounded-md
+              className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors group relative ${
                 currentChannel?.id === channel.id
-                  ? 'bg-slate-600 text-white font-semibold' // Updated selected style
-                  : 'text-slate-200 hover:bg-slate-700 hover:text-white' // Updated base and hover
+                  ? 'bg-slate-600 text-white font-semibold'
+                  : (unreadCounts[`channel_${channel.id}`]?.hasMention ? 'text-white font-semibold hover:bg-slate-700' : (unreadCounts[`channel_${channel.id}`]?.count > 0 ? 'text-slate-100 font-medium hover:bg-slate-700' : 'text-slate-300 hover:bg-slate-700 hover:text-slate-100'))
               }`}
             >
-              <div className="flex items-center gap-2">
-                <span className={`${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500 group-hover:text-slate-400'}`}>
-                  #
-                </span>
-                <span className={`truncate ${currentChannel?.id === channel.id ? 'font-semibold' : 'font-medium'}`}>{channel.name}</span>
-                {channel.isPrivate && (
-                  <svg className={`w-3 h-3 flex-shrink-0 ${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500'}`} fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                  </svg>
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span className={`${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500 group-hover:text-slate-400'}`}>
+                    #
+                  </span>
+                  <span className={`truncate ${currentChannel?.id === channel.id ? 'font-semibold' : (unreadCounts[`channel_${channel.id}`]?.count > 0 ? 'font-medium' : 'font-normal')}`}>{channel.name}</span>
+                  {channel.isPrivate && (
+                    <svg className={`w-3 h-3 flex-shrink-0 ${currentChannel?.id === channel.id ? 'text-slate-300' : 'text-slate-500'}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                </div>
+                {unreadCounts[`channel_${channel.id}`]?.count > 0 && (
+                  <span className={`ml-auto text-xs px-1.5 py-0.5 rounded-full ${
+                    unreadCounts[`channel_${channel.id}`]?.hasMention
+                      ? 'bg-red-500 text-white'
+                      : (currentChannel?.id === channel.id ? 'bg-slate-200 text-slate-700' : 'bg-slate-500 text-white')
+                  }`}>
+                    {unreadCounts[`channel_${channel.id}`]?.hasMention ? '@' : unreadCounts[`channel_${channel.id}`]?.count}
+                  </span>
                 )}
               </div>
               {/* Description can be removed for density, or kept if important */}
@@ -169,12 +231,10 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
               <button
                 key={convo.user.id}
                 onClick={() => onDirectMessage(convo.user)}
-                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors group ${ // gap-2.5
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors group relative ${
                   currentDM?.id === convo.user.id
-                    ? 'bg-slate-600 text-white font-semibold' // Updated selected DM style
-                    : unreadDmSenders.has(convo.user.id)
-                      ? 'text-white font-semibold hover:bg-slate-700' // Unread style
-                      : 'text-slate-300 hover:bg-slate-700 hover:text-slate-100' // Default
+                    ? 'bg-slate-600 text-white font-semibold'
+                    : (unreadCounts[`dm_${convo.user.id}`]?.count > 0 ? 'text-white font-semibold hover:bg-slate-700' : 'text-slate-300 hover:bg-slate-700 hover:text-slate-100')
                 }`}
               >
                 <div className="relative flex-shrink-0">
@@ -192,12 +252,14 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                       </span>
                     </div>
                   )}
-                  {/* TODO: Add dynamic online status indicator */}
-                  <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 border border-slate-800 rounded-full ${presences.get(convo.user.id)?.isOnline ? 'bg-green-400' : 'bg-slate-500'}`}></div>
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <p className={`truncate ${ currentDM?.id === convo.user.id || unreadDmSenders.has(convo.user.id) ? 'text-white' : 'text-slate-200' } group-hover:text-white`}>
-                    {convo.user.name || convo.user.username}
+                  <p className={`truncate flex items-center ${ currentDM?.id === convo.user.id || unreadCounts[`dm_${convo.user.id}`]?.count > 0 ? 'text-white' : 'text-slate-200' } group-hover:text-white`}>
+                    <span>{convo.user.name || convo.user.username}</span>
+                    {presences.get(convo.user.id)?.customStatusEmoji && (
+                      <span className="ml-1.5 text-xs">{presences.get(convo.user.id)?.customStatusEmoji}</span>
+                    )}
                   </p>
                   {convo.lastMessage && (
                     <p className={`text-xs truncate ${currentDM?.id === convo.user.id ? 'text-slate-300' : 'text-slate-400'} group-hover:text-slate-300`}>
@@ -206,8 +268,10 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                     </p>
                   )}
                 </div>
-                {unreadDmSenders.has(convo.user.id) && ! (currentDM?.id === convo.user.id) && ( // Show dot only if unread AND not currently selected
-                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0 ml-auto"></span>
+                {unreadCounts[`dm_${convo.user.id}`]?.count > 0 && currentDM?.id !== convo.user.id && (
+                  <span className="ml-auto text-xs bg-red-500 text-white font-medium px-1.5 py-0.5 rounded-full">
+                    {unreadCounts[`dm_${convo.user.id}`]?.count > 9 ? '9+' : unreadCounts[`dm_${convo.user.id}`]?.count}
+                  </span>
                 )}
               </button>
             ))}
@@ -227,15 +291,17 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
             </svg>
             Team ({workspace?.members?.length || 0})
           </h3>
-          <button 
-            onClick={() => setShowInviteUser(true)}
-            className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
-            title="Invite user"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-          </button>
+          {isCurrentUserAdmin && (
+            <button
+              onClick={() => setShowInviteUser(true)}
+              className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 p-1 rounded transition-colors"
+              title="Invite user"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </button>
+          )}
         </div>
         
         <div className="space-y-1">
@@ -260,18 +326,42 @@ export function Sidebar({ workspace, currentChannel, onChannelSelect, onChannelC
                     </span>
                   </div>
                 )}
-                {/* TODO: Dynamic online status indicator */}
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 border border-slate-800 rounded-full"></div>
+                <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 border border-slate-800 rounded-full ${presences.get(member.user.id)?.isOnline ? 'bg-green-400' : 'bg-slate-500'}`}></div>
               </div>
               <div className="flex-1 min-w-0 text-left">
-                <p className="truncate text-slate-200 group-hover:text-white">
-                  {member.user.name || member.user.username}
+                <p className="truncate text-slate-200 group-hover:text-white flex items-center">
+                  <span>{member.user.name || member.user.username}</span>
+                  {presences.get(member.user.id)?.customStatusEmoji && (
+                      <span className="ml-1.5 text-xs">{presences.get(member.user.id)?.customStatusEmoji}</span>
+                  )}
+                  {member.userId === session?.user?.id && <span className="text-xs text-slate-500 ml-1"> (You)</span>}
                 </p>
-                {/* Role can be removed for cleaner DM list, or kept if important for context */}
-                {/* <p className="text-xs text-slate-400 capitalize group-hover:text-slate-300">
-                  {member.role.toLowerCase()}
-                </p> */}
+                  <p className="text-xs text-slate-400 dark:text-slate-500 capitalize group-hover:text-slate-300">
+                    {member.role.toLowerCase()}
+                  </p>
               </div>
+                {isCurrentUserAdmin && member.userId !== workspace?.ownerId && member.userId !== session?.user?.id && (
+                  // Admins can change roles, but not for the owner or themselves via this simple UI
+                  // A more complex UI might allow self-demotion if not last admin.
+                  <div className="ml-auto pl-2 flex-shrink-0">
+                    <select
+                      value={member.role}
+                      onChange={(e) => handleRoleChange(member.userId, e.target.value as MemberRole)}
+                      onClick={(e) => e.stopPropagation()} // Prevent button click when changing select
+                      className="text-xs bg-slate-700 dark:bg-slate-600 text-slate-200 dark:text-slate-100 border-slate-600 dark:border-slate-500 rounded p-0.5 focus:ring-1 focus:ring-indigo-500"
+                      disabled={member.userId === workspace?.ownerId} // Extra safety: disable for owner
+                    >
+                      {Object.values(MemberRole).map((roleValue) => (
+                        <option key={roleValue} value={roleValue}>
+                          {roleValue.charAt(0).toUpperCase() + roleValue.slice(1).toLowerCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                 {isCurrentUserAdmin && member.userId === workspace?.ownerId && (
+                    <span className="ml-auto pl-2 text-xs text-amber-400 flex-shrink-0">Owner</span>
+                 )}
             </button>
           ))}
         </div>

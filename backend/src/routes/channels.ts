@@ -2,35 +2,29 @@ import { Router } from 'express'
 import { db } from '../services/database'
 import { AuthenticatedRequest } from '../types'
 import { logger } from '../utils/logger'
+import { roleCheckMiddleware } from '../middleware/auth' // Import
+import { MemberRole } from '@prisma/client' // Import
 
-const router = Router()
+const router = Router({ mergeParams: true }) // Enable mergeParams
 
-// Create channel
-router.post('/', async (req: AuthenticatedRequest, res) => {
+// Create channel - ADMIN or MEMBER
+router.post('/', roleCheckMiddleware([MemberRole.ADMIN, MemberRole.MEMBER]), async (req: AuthenticatedRequest, res) => {
   try {
-    const { name, description, isPrivate, workspaceId } = req.body
-    const userId = req.user!.id
+    const { name, description, isPrivate } = req.body;
+    const { workspaceId } = req.params; // Get workspaceId from route params
+    const userId = req.user!.id;
 
-    if (!name || !workspaceId) {
-      return res.status(400).json({ error: 'Channel name and workspace ID are required' })
+    if (!name) { // workspaceId is now from params, so only name needs validation from body
+      return res.status(400).json({ error: 'Channel name is required' });
     }
 
-    // Check if user is member of workspace
-    const membership = await db.member.findFirst({
-      where: {
-        workspaceId,
-        userId
-      }
-    })
-
-    if (!membership) {
-      return res.status(403).json({ error: 'You are not a member of this workspace' })
-    }
+    // User membership and role (ADMIN/MEMBER) already validated by authMiddleware & roleCheckMiddleware
+    // No need for: const membership = await db.member.findFirst(...)
 
     // Check if channel name already exists in workspace
     const existingChannel = await db.channel.findFirst({
       where: {
-        workspaceId,
+        workspaceId, // Use workspaceId from params
         name: name.toLowerCase()
       }
     })
@@ -213,5 +207,380 @@ router.post('/:id/leave', async (req: AuthenticatedRequest, res) => {
     res.status(500).json({ error: 'Failed to leave channel' })
   }
 })
+
+// Get all members of a specific channel
+router.get('/:channelId/members', async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user!.id;
+
+    // 1. Authorization: Check if the current user is a member of this channel
+    const currentUserMembership = await db.channelMember.findUnique({
+      where: {
+        channelId_userId: { // Prisma unique constraint name: @@unique([channelId, userId])
+          channelId,
+          userId,
+        },
+      },
+    });
+
+    if (!currentUserMembership) {
+      // Alternative: Could also allow workspace admins to see members of any channel in their workspace.
+      // For now, strict channel membership is required to view members.
+      return res.status(403).json({ error: 'You are not a member of this channel and cannot view its members.' });
+    }
+
+    // 2. Fetch all members of the channel
+    const members = await db.channelMember.findMany({
+      where: { channelId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            name: true,
+            avatar: true,
+            // Optionally, include their workspace role if needed for display context
+            // This would require fetching their Member record for the channel's workspace.
+            // For simplicity, just user details for now.
+          },
+        },
+      },
+      orderBy: {
+        joinedAt: 'asc', // Or by username, etc.
+      },
+    });
+
+    // Map to a slightly cleaner structure if desired, or return as is.
+    // e.g., res.json({ members: members.map(m => m.user) });
+    // But returning full ChannelMember with nested user is also fine.
+    res.json({ members });
+
+  } catch (error) {
+    logger.error(`Get channel members error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to fetch channel members.' });
+  }
+});
+
+// Update channel details (e.g., description) - ADMIN only for now
+router.put('/:channelId', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // from mergedParams
+    const { description } = req.body as { description?: string | null };
+    const currentUserId = req.user!.id;
+
+    if (description === undefined) {
+      return res.status(400).json({ error: 'No description provided for update.' });
+    }
+    if (description && description.length > 255) { // Example validation
+        return res.status(400).json({ error: 'Description cannot exceed 255 characters.'});
+    }
+
+
+    const channelToUpdate = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToUpdate) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToUpdate.workspaceId !== workspaceId) {
+      return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        description: description === "" ? null : description, // Allow clearing description
+      },
+      // Select all relevant fields that clients might need
+      select: {
+        id: true, name: true, description: true, isPrivate: true, isArchived: true,
+        workspaceId: true, createdAt: true, createdBy:true, archivedAt: true, archivedById: true
+      }
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} description updated by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Update channel description error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to update channel description.' });
+  }
+});
+
+// Unarchive a channel - ADMIN only
+router.put('/:channelId/unarchive', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // Available due to mergeParams
+    const currentUserId = req.user!.id;
+
+    const channelToUnarchive = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToUnarchive) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToUnarchive.workspaceId !== workspaceId) {
+        return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+    if (!channelToUnarchive.isArchived) {
+      return res.status(400).json({ error: 'Channel is not archived.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        isArchived: false,
+        archivedAt: null,
+        archivedById: null,
+      },
+      // Include necessary fields for the response and socket event
+      select: { id: true, name: true, isArchived: true, isPrivate: true, workspaceId: true, description: true, createdAt: true } // Added more fields for client update
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} unarchived by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Unarchive channel error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to unarchive channel.' });
+  }
+});
+
+// Archive a channel - ADMIN only
+router.put('/:channelId/archive', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { workspaceId } = req.params; // Available due to mergeParams and how router is mounted
+    const currentUserId = req.user!.id;
+
+    const channelToArchive = await db.channel.findUnique({
+      where: { id: channelId }
+    });
+
+    if (!channelToArchive) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+    if (channelToArchive.workspaceId !== workspaceId) {
+        return res.status(403).json({ error: 'Channel does not belong to this workspace.' });
+    }
+    if (channelToArchive.isArchived) {
+      return res.status(400).json({ error: 'Channel is already archived.' });
+    }
+    // Rule: Prevent archiving the "general" channel
+    if (channelToArchive.name.toLowerCase() === 'general') {
+      return res.status(400).json({ error: 'The "general" channel cannot be archived.' });
+    }
+
+    const updatedChannel = await db.channel.update({
+      where: { id: channelId },
+      data: {
+        isArchived: true,
+        archivedAt: new Date(),
+        archivedById: currentUserId,
+      },
+      // Include necessary fields for the response and socket event
+      select: { id: true, name: true, isArchived: true, isPrivate: true, workspaceId: true, archivedAt: true, archivedById: true }
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel_updated', updatedChannel);
+    }
+
+    logger.info(`Channel ${channelId} archived by user ${currentUserId} in workspace ${workspaceId}`);
+    res.json({ channel: updatedChannel });
+
+  } catch (error) {
+    logger.error(`Archive channel error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to archive channel.' });
+  }
+});
+
+// Remove a user from a channel
+// DELETE /api/(workspaces/:workspaceId)/channels/:channelId/members/:targetUserId
+router.delete('/:channelId/members/:targetUserId', roleCheckMiddleware([MemberRole.ADMIN]), async (req: AuthenticatedRequest, res) => {
+  // Only Workspace ADMINs can use this endpoint to remove others.
+  // Users can remove themselves using POST /:channelId/leave
+  try {
+    const { channelId, targetUserId } = req.params;
+    const currentUserId = req.user!.id; // This is the admin performing the action
+
+    if (currentUserId === targetUserId) {
+      return res.status(400).json({ error: 'Admin cannot remove themselves using this endpoint. Use "Leave Channel" instead.' });
+    }
+
+    // 1. Fetch channel and target member details
+    const channel = await db.channel.findUnique({ where: { id: channelId } });
+    if (!channel) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+
+    const targetMembership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId, userId: targetUserId } },
+      include: { user: { select: { id: true, username: true, name: true } } }
+    });
+
+    if (!targetMembership) {
+      return res.status(404).json({ error: 'Target user is not a member of this channel.' });
+    }
+
+    // 2. Additional Safeguards (optional, can be more complex)
+    // - Prevent removing the channel creator if they are the last member?
+    // - Prevent removing workspace owner? (owner should always have access or leave by choice)
+    // For now, an ADMIN can remove anyone except themselves via this route.
+    // The workspace owner cannot be removed from the workspace itself, but can be removed from channels by another admin.
+
+    // 3. Remove user from channel
+    await db.channelMember.delete({
+      where: { channelId_userId: { channelId, userId: targetUserId } }
+    });
+
+    // 4. Emit socket events
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`channel:${channelId}`).emit('user_removed_from_channel', {
+        channelId,
+        userId: targetUserId, // User who was removed
+        removedByUserId: currentUserId
+      });
+
+      const targetUserSocketId = (req.app.get('userSockets') as Map<string,string>).get(targetUserId);
+      if (targetUserSocketId) {
+        io.to(targetUserSocketId).emit('removed_from_channel', {
+          channelId,
+          channelName: channel.name,
+          workspaceId: channel.workspaceId,
+          removedByUsername: req.user!.username
+        });
+      }
+    }
+
+    logger.info(`User ${targetUserId} removed from channel ${channelId} by admin ${currentUserId}`);
+    res.status(200).json({ success: true, message: 'User removed from channel successfully.' });
+
+  } catch (error) {
+    logger.error(`Remove member from channel error for channel ${req.params.channelId}, user ${req.params.targetUserId}:`, error);
+    res.status(500).json({ error: 'Failed to remove member from channel.' });
+  }
+});
+
+// Add a user to a channel
+// POST /api/(workspaces/:workspaceId)/channels/:channelId/members
+router.post('/:channelId/members', async (req: AuthenticatedRequest, res) => {
+  try {
+    const { channelId } = req.params;
+    const { userId: targetUserId } = req.body; // ID of the user to add
+    const currentUserId = req.user!.id;
+    const currentUserRole = req.user!.currentWorkspaceRole; // From authMiddleware
+
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'User ID to add is required.' });
+    }
+
+    // 1. Fetch channel details
+    const channel = await db.channel.findUnique({
+      where: { id: channelId },
+      select: { id: true, name: true, isPrivate: true, workspaceId: true }
+    });
+
+    if (!channel) {
+      return res.status(404).json({ error: 'Channel not found.' });
+    }
+
+    // Ensure current user is part of the workspace (implicit by currentWorkspaceRole if not null)
+    if (!currentUserRole) {
+        return res.status(403).json({ error: 'You are not a member of this workspace.'});
+    }
+
+    // 2. Permission Check for current user
+    let canAddMember = false;
+    if (currentUserRole === MemberRole.ADMIN) {
+      canAddMember = true;
+    } else if (!channel.isPrivate) { // Public channel
+      // Any member of a public channel can add another workspace member
+      const currentUserChannelMembership = await db.channelMember.findUnique({
+        where: { channelId_userId: { channelId, userId: currentUserId } }
+      });
+      if (currentUserChannelMembership) {
+        canAddMember = true;
+      }
+    }
+    // Private channels: only ADMINs can add (for now)
+
+    if (!canAddMember) {
+      return res.status(403).json({ error: 'You do not have permission to add members to this channel.' });
+    }
+
+    // 3. Check if targetUser is a member of the workspace
+    const targetUserWorkspaceMembership = await db.member.findUnique({
+      where: { userId_workspaceId: { userId: targetUserId, workspaceId: channel.workspaceId } }
+    });
+    if (!targetUserWorkspaceMembership) {
+      return res.status(404).json({ error: 'User to add is not a member of this workspace.' });
+    }
+
+    // 4. Check if targetUser is already a member of the channel
+    const existingChannelMembership = await db.channelMember.findUnique({
+      where: { channelId_userId: { channelId, userId: targetUserId } }
+    });
+    if (existingChannelMembership) {
+      return res.status(409).json({ error: 'User is already a member of this channel.' });
+    }
+
+    // 5. Add user to channel
+    const newChannelMember = await db.channelMember.create({
+      data: { channelId, userId: targetUserId },
+      include: { user: { select: { id: true, username: true, name: true, avatar: true } } }
+    });
+
+    // 6. Emit socket events
+    const io = req.app.get('io');
+    if (io) {
+      const eventPayload = {
+        channelId,
+        userId: newChannelMember.userId,
+        addedByUserId: currentUserId,
+        userDetails: newChannelMember.user
+      };
+      io.to(`channel:${channelId}`).emit('user_added_to_channel', eventPayload);
+
+      const targetUserSocketId = (req.app.get('userSockets') as Map<string,string>).get(targetUserId);
+      if (targetUserSocketId) {
+        io.to(targetUserSocketId).emit('added_to_channel', {
+          channelId,
+          channelName: channel.name,
+          workspaceId: channel.workspaceId,
+          addedByUsername: req.user!.username
+        });
+      }
+    }
+
+    logger.info(`User ${targetUserId} added to channel ${channelId} by ${currentUserId}`);
+    res.status(201).json({ member: newChannelMember });
+
+  } catch (error) {
+    logger.error(`Add member to channel error for channel ${req.params.channelId}:`, error);
+    res.status(500).json({ error: 'Failed to add member to channel.' });
+  }
+});
+
 
 export default router

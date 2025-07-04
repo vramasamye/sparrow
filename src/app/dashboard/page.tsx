@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ChatInterface } from '@/components/chat/chat-interface'
 import { CreateWorkspaceModal } from '@/components/workspace/create-workspace-modal'
+import { NotificationProvider } from '@/contexts/NotificationContext' // Import NotificationProvider
 
 export default function Dashboard() {
   const { data: session, status } = useSession()
@@ -41,7 +42,17 @@ export default function Dashboard() {
     }
   }
 
+  const refreshWorkspaces = () => {
+    // Optionally, could try to be smarter and only refetch the currentWorkspace if its ID is known
+    // and if the invite was for the currentWorkspace.
+    // For now, a full reload of all workspaces is simpler.
+    setLoading(true); // Show loading indicator during refresh
+    loadWorkspaces();
+  }
+
   const handleWorkspaceCreated = (workspace: any) => {
+    // When a new workspace is created, it's added to the list and set as current.
+    // No need to call refreshWorkspaces which reloads all.
     setWorkspaces(prev => [...prev, workspace])
     setCurrentWorkspace(workspace)
     setShowCreateWorkspace(false)
@@ -88,15 +99,17 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="h-screen flex bg-gray-100">
-      <ChatInterface 
-        workspace={currentWorkspace}
-        workspaces={workspaces}
-        onWorkspaceChange={setCurrentWorkspace}
-        onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      />
-      
-      {showCreateWorkspace && (
+    <NotificationProvider> {/* Wrap with NotificationProvider */}
+      <div className="h-screen flex bg-gray-100 dark:bg-slate-950"> {/* Added dark bg for consistency */}
+        <ChatInterface
+          workspace={currentWorkspace}
+          workspaces={workspaces}
+          onWorkspaceChange={setCurrentWorkspace}
+          onCreateWorkspace={() => setShowCreateWorkspace(true)}
+          onRefreshWorkspaces={refreshWorkspaces}
+        />
+
+        {showCreateWorkspace && (
         <CreateWorkspaceModal
           onClose={() => setShowCreateWorkspace(false)}
           onWorkspaceCreated={handleWorkspaceCreated}

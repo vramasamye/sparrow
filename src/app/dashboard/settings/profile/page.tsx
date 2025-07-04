@@ -1,8 +1,9 @@
 'use client'
 
 import { useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation'; // For redirecting if not authenticated
+import EmojiPicker from '@/components/ui/emoji-picker';
 
 interface UserProfile {
   id: string;
@@ -13,7 +14,10 @@ interface UserProfile {
   bio?: string | null;
   jobTitle?: string | null;
   pronouns?: string | null;
+  customStatusText?: string | null;
+  customStatusEmoji?: string | null;
   createdAt: string;
+  members?: Array<{workspace?: {id: string}}>;
 }
 
 export default function ProfilePage() {
@@ -30,16 +34,28 @@ export default function ProfilePage() {
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // State for custom status editing
+  const [customStatusText, setCustomStatusText] = useState('');
+  const [customStatusEmoji, setCustomStatusEmoji] = useState('');
+  const [showStatusEmojiPicker, setShowStatusEmojiPicker] = useState(false);
+  const statusEmojiPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+
   useEffect(() => {
-    if (profile && isEditing) {
+    if (profile) { // Initialize form data and status when profile loads, not just on edit toggle
       setFormData({
         name: profile.name || "",
         username: profile.username || "",
         bio: profile.bio || "",
         jobTitle: profile.jobTitle || "",
         pronouns: profile.pronouns || "",
-        avatar: profile.avatar // Store current avatar URL for reference, not directly edited here
+        avatar: profile.avatar
       });
+      setCustomStatusText(profile.customStatusText || '');
+      setCustomStatusEmoji(profile.customStatusEmoji || '');
+    }
+    if (profile && isEditing) { // When entering edit mode specifically
       setNewAvatarFile(null);
       setAvatarPreview(null);
     }
@@ -114,9 +130,6 @@ export default function ProfilePage() {
       return avatarFilename; // It's already a full URL
     }
     return `/api/public-files/view/${avatarFilename}`;
-  };
-
-
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -234,12 +247,120 @@ export default function ProfilePage() {
   };
 
 
+  const handleSetCustomStatus = async () => {
+    if (!session) return;
+    setIsSubmitting(true); // Can use a separate loading state for status if preferred
+    setError(null);
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      const response = await fetch('/api/users/me/status', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ text: customStatusText, emoji: customStatusEmoji }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to set status');
+      }
+      const data = await response.json();
+      // Update local profile state for immediate feedback, though socket should also update presence context
+      if (profile) {
+        setProfile(prev => prev ? {...prev, customStatusText: data.customStatusText, customStatusEmoji: data.customStatusEmoji } : null);
+      }
+      alert("Status updated!"); // Or a more subtle notification
+    } catch (err: any) {
+      setError(`Status update error: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleClearCustomStatus = async () => {
+    if (!session) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('token') || session.accessToken;
+      const response = await fetch('/api/users/me/status', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to clear status');
+      }
+      setCustomStatusText('');
+      setCustomStatusEmoji('');
+      if (profile) {
+         setProfile(prev => prev ? {...prev, customStatusText: null, customStatusEmoji: null } : null);
+      }
+      alert("Status cleared!");
+    } catch (err: any) {
+      setError(`Status clear error: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleStatusEmojiSelect = (emoji: string) => {
+    setCustomStatusEmoji(emoji);
+    setShowStatusEmojiPicker(false);
+  };
+
   return (
     <div className="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
-      <header className="mb-8">
+      <header className="mb-6">
         <h1 className="text-3xl font-bold text-slate-800 dark:text-slate-100">My Profile</h1>
       </header>
 
+      {/* Custom Status Section - Placed above the main profile edit form */}
+      <div className="bg-white dark:bg-slate-800 shadow-xl rounded-lg p-6 md:p-8 mb-8">
+        <h2 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4">Set Your Status</h2>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                ref={statusEmojiPickerButtonRef}
+                onClick={() => setShowStatusEmojiPicker(prev => !prev)}
+                className="p-2 border border-slate-300 dark:border-slate-600 rounded-md hover:bg-slate-50 dark:hover:bg-slate-700"
+              >
+                {customStatusEmoji || '🙂'} {/* Default emoji if none selected */}
+              </button>
+              {showStatusEmojiPicker && (
+                <div className="absolute z-10 mt-1" ref={emojiPickerRef}>
+                  <EmojiPicker onEmojiSelect={handleStatusEmojiSelect} onClose={() => setShowStatusEmojiPicker(false)} />
+                </div>
+              )}
+            </div>
+            <input
+              type="text"
+              placeholder="What's your status?"
+              value={customStatusText}
+              onChange={(e) => setCustomStatusText(e.target.value)}
+              maxLength={100}
+              className="flex-grow mt-0 block w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            {(profile?.customStatusText || profile?.customStatusEmoji) && ( // Show clear only if a status is set
+                 <button type="button" onClick={handleClearCustomStatus} disabled={isSubmitting} className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md">
+                    Clear Status
+                 </button>
+            )}
+            <button type="button" onClick={handleSetCustomStatus} disabled={isSubmitting} className="px-4 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-md flex items-center">
+              {isSubmitting && <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+              Set Status
+            </button>
+          </div>
+        </div>
+        {/* Display current status if not actively editing it in fields above */}
+        {(!customStatusText && !customStatusEmoji && (profile?.customStatusText || profile?.customStatusEmoji)) && (
+             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                Current: {profile.customStatusEmoji} {profile.customStatusText}
+            </p>
+        )}
+      </div>
       {isEditing ? (
         <form onSubmit={handleSubmitEdit} className="bg-white dark:bg-slate-800 shadow-xl rounded-lg p-6 md:p-8 space-y-6">
           {/* Avatar Editing */}

@@ -3,10 +3,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { MessageList } from './message-list'
 import { MessageComposer } from './message-composer'
-import { TypingIndicator } from './typing-indicator'
+import { TypingIndicator } from './typing-indicator' // Keep this if used, or remove if not.
 import { useSocket } from '@/hooks/useSocket'
+import { useSession } from 'next-auth/react'; // Ensure useSession is imported once
+import { ThreadPanel } from './thread-panel';
+import { ChannelDetailsPanel } from './channel-details-panel'; // Import ChannelDetailsPanel
 
-interface WorkspaceMember { // Define this type here or import from a shared types file
+
+interface WorkspaceMember {
   user: {
     id: string
     username: string
@@ -16,23 +20,23 @@ interface WorkspaceMember { // Define this type here or import from a shared typ
 interface MessageAreaProps {
   channel: any
   workspaceMembers?: WorkspaceMember[]
+  isCurrentUserAdmin?: boolean; // Added for ChannelDetailsPanel
 }
 
-export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
-  const [messages, setMessages] = useState<any[]>([]) // Use a more specific Message type if available
+export function MessageArea({ channel, workspaceMembers = [], isCurrentUserAdmin = false }: MessageAreaProps) {
+  const { data: session } = useSession();
+  const [messages, setMessages] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
-  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null); // State for open thread
+  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null);
+  const [showChannelDetails, setShowChannelDetails] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null)
-import { ThreadPanel } from './thread-panel'; // Import ThreadPanel
 
-// ... (other imports)
+  // State for editing channel description
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [editableDescription, setEditableDescription] = useState('');
+  const descriptionEditInputRef = useRef<HTMLTextAreaElement>(null);
 
-// ... (interface MessageAreaProps)
-
-export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps) {
-  // ... (existing state: messages, loading, typingUsers, openedThreadId, messagesEndRef)
-  const { data: session } = useSession(); // Get session for currentUserId
   const {
     joinChannel,
     leaveChannel,
@@ -51,6 +55,71 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
   const handleViewThread = (messageId: string) => {
     setOpenedThreadId(messageId);
   };
+
+  const handleStartEditDescription = () => {
+    setEditableDescription(channel?.description || '');
+    setIsEditingDescription(true);
+  };
+
+  const handleCancelEditDescription = () => {
+    setIsEditingDescription(false);
+    // setEditableDescription(''); // No need to clear, will be reset on next edit
+  };
+
+  const handleSaveDescription = async () => {
+    if (!channel || !session) return;
+    // Basic validation (e.g. length) can be added here if needed, or rely on backend
+    if (editableDescription.length > 255) {
+        alert("Description cannot exceed 255 characters.");
+        return;
+    }
+
+    const token = localStorage.getItem('token') || session.accessToken;
+    try {
+      const response = await fetch(`/api/workspaces/${channel.workspaceId}/channels/${channel.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ description: editableDescription }),
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to update description');
+      }
+      // Success: UI will update via socket event 'channel_updated' which triggers workspace refresh
+      setIsEditingDescription(false);
+    } catch (error: any) {
+      console.error("Failed to save description:", error);
+      alert(`Error: ${error.message}`); // Basic error feedback
+    }
+  };
+
+  // Auto-focus textarea when editing description starts
+  useEffect(() => {
+    if (isEditingDescription && descriptionEditInputRef.current) {
+      descriptionEditInputRef.current.focus();
+      descriptionEditInputRef.current.select(); // Select all text
+    }
+  }, [isEditingDescription]);
+
+  // Effect to handle external changes to channel description while editing
+  useEffect(() => {
+    if (isEditingDescription && channel?.description !== editableDescription) {
+      // If the actual channel description changes while user is editing,
+      // reset the editing state to show the latest version.
+      // Could also prompt user, but this is simpler.
+      setEditableDescription(channel?.description || '');
+      // Optionally, keep editing open with new base:
+      // setIsEditingDescription(true);
+      // Or, cancel edit to show the new description:
+      setIsEditingDescription(false);
+      // console.warn("Channel description was updated externally while editing. Edit cancelled."); // Removed for cleanup
+    }
+    // Only re-run if channel.description changes, not editableDescription itself.
+  }, [channel?.description, isEditingDescription]);
+
 
   useEffect(() => {
     if (channel?.id) {
@@ -252,28 +321,37 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
   }
 
   return (
-    <div className="flex h-full"> {/* Ensure parent flex container for ThreadPanel */}
-      <div className="flex flex-col h-full flex-1"> {/* Main message area takes available space */}
+    <div className="flex h-full">
+      <div className="flex flex-col h-full flex-1">
         {/* Channel Header */}
-        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm"> {/* p-3 for compactness, dark mode bg */}
+        <div className="border-b border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 shadow-sm">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate"> {/* text-base */}
-              <span className="text-slate-500 dark:text-slate-400"># </span>{channel.name}
-            </h2>
-            {channel.isPrivate && (
-              <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500 flex-shrink-0">
-                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"> {/* Slightly larger icon */}
-                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                </svg>
-                <span>Private</span>
-              </div>
-            )}
+            <div
+              className="flex items-center gap-2 min-w-0 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 p-1 -ml-1 rounded-md"
+              onClick={() => setShowChannelDetails(true)}
+              title="View channel details"
+            >
+              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-base truncate">
+                <span className="text-slate-500 dark:text-slate-400"># </span>{channel.name}
+              </h2>
+              {channel.isPrivate && (
+                <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500 flex-shrink-0">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                  </svg>
+                  <span>Private</span>
+                </div>
+              )}
+            </div>
           </div>
           
-          <div className="flex items-center gap-1"> {/* Reduced gap */}
-            {/* Placeholder: Channel members / info button */}
-            <button title="View channel details" className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md">
+          <div className="flex items-center gap-1">
+            {/* Channel members / info button - also opens panel */}
+            <button
+              onClick={() => setShowChannelDetails(true)}
+              title="View channel details"
+              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
+            >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </button>
              {/* Placeholder: Call button */}
@@ -286,16 +364,61 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
             </button>
           </div>
         </div>
-        {channel.description && (
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">
-            {/* Icon for description can be added if desired */}
-            {channel.description}
-          </p>
+        {channel.description ? (
+          <div className="mt-1 flex items-start gap-1.5 group">
+            <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap break-words">
+              {channel.description}
+            </p>
+            {isCurrentUserAdmin && !isEditingDescription && (
+              <button
+                onClick={handleStartEditDescription}
+                className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-0.5 rounded ml-1 flex-shrink-0"
+                title="Edit description"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path></svg>
+              </button>
+            )}
+          </div>
+        ) : isCurrentUserAdmin && !isEditingDescription ? (
+           <button
+            onClick={handleStartEditDescription}
+            className="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+           >
+            + Add channel description
+           </button>
+        ) : null}
+
+        {isEditingDescription && (
+          <div className="mt-2">
+            <textarea
+              ref={descriptionEditInputRef}
+              value={editableDescription}
+              onChange={(e) => setEditableDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveDescription(); }
+                if (e.key === 'Escape') { handleCancelEditDescription(); }
+              }}
+              className="w-full text-xs p-1.5 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:ring-indigo-500 focus:border-indigo-500"
+              rows={2}
+              maxLength={255}
+            />
+            <div className="mt-1.5 flex items-center justify-end gap-2">
+              <button onClick={handleCancelEditDescription} className="px-2 py-1 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 rounded-md">Cancel</button>
+              <button onClick={handleSaveDescription} className="px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-md">Save</button>
+            </div>
+          </div>
         )}
       </div>
 
+      {/* Archived Channel Banner */}
+      {channel?.isArchived && (
+        <div className="p-3 bg-amber-100 dark:bg-amber-800/30 text-amber-700 dark:text-amber-300 text-sm text-center border-b border-amber-200 dark:border-amber-700">
+          This channel is archived. It is read-only.
+        </div>
+      )}
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto bg-slate-50">
+      <div className={`flex-1 overflow-y-auto ${channel?.isArchived ? 'bg-slate-100 dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-850'}`}> {/* Slightly different bg for archived */}
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
@@ -311,16 +434,18 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
         )}
       </div>
 
-      {/* Message Composer */}
-      <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700"> {/* Dark mode for composer container */}
-        <MessageComposer 
-          onSendMessage={handleSendMessage}
-          placeholder={`Message #${channel.name}`}
-          channelId={channel.id}
-          workspaceId={channel?.workspaceId} // Pass workspaceId
-          workspaceMembers={workspaceMembers}
-        />
-      </div>
+      {/* Message Composer - Hidden if channel is archived */}
+      {!channel?.isArchived && (
+        <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
+          <MessageComposer
+            onSendMessage={handleSendMessage}
+            placeholder={`Message #${channel.name}`}
+            channelId={channel.id}
+            workspaceId={channel?.workspaceId}
+            workspaceMembers={workspaceMembers}
+          />
+        </div>
+      )}
     </div>
 
     {/* Thread Panel */}
@@ -332,6 +457,15 @@ export function MessageArea({ channel, workspaceMembers = [] }: MessageAreaProps
         currentUserId={session?.user?.id}
         onClose={() => setOpenedThreadId(null)}
         // onMessageSent={() => { /* Optionally refetch main channel messages or specific message for replyCount update */ }}
+      />
+    )}
+    {showChannelDetails && channel && (
+      <ChannelDetailsPanel
+        channel={channel}
+        workspaceId={channel.workspaceId} // Ensure channel object has workspaceId
+        onClose={() => setShowChannelDetails(false)}
+        isCurrentUserAdmin={isCurrentUserAdmin}
+        // currentUserId={session?.user?.id} // Pass if needed by panel for member list interactions
       />
     )}
   </div>
