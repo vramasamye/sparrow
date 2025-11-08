@@ -70,6 +70,8 @@ model UserPreferences {
   feedFrequency     String   @default("daily") // daily, hourly, realtime
   autoPostEnabled   Boolean  @default(false)
   emailNotifications Boolean @default(true)
+  selectedPlatforms String[] @default([]) // Platforms to auto-post: twitter, linkedin, facebook
+  postsPerPlatform  Int      @default(6) // Number of posts per platform per cycle
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -199,4 +201,24 @@ model Analytics {
 
   @@index([draftId])
   @@map("analytics")
+}
+
+// Posted content tracking (to prevent duplicates)
+model PostedContent {
+  id          String   @id @default(cuid())
+  userId      String
+  contentId   String
+  platform    String
+  draftId     String?
+  postedAt    DateTime @default(now())
+  postUrl     String?  // URL to the posted content on social media
+  status      String   @default("success") // success, failed
+  error       String?  // Error message if failed
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, contentId, platform])
+  @@index([userId])
+  @@index([contentId])
+  @@index([postedAt])
+  @@map("posted_content")
 }

@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useSession, signOut } from "next-auth/react"
-import { Sparkles, LayoutDashboard, Rss, FileText, Settings, User, LogOut } from "lucide-react"
+import { Sparkles, LayoutDashboard, Rss, FileText, Settings, User, LogOut, BarChart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -19,6 +19,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/content", label: "Content", icon: Rss },
   { href: "/dashboard/drafts", label: "Drafts", icon: FileText },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ]
 

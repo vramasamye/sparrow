@@ -5,10 +5,11 @@ import { useSession } from "next-auth/react"
 import { DashboardNav } from "@/components/dashboard/dashboard-nav"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, Save } from "lucide-react"
+import { Loader2, Save, Plus, Trash2, Twitter, Linkedin, Facebook, Check } from "lucide-react"
 
 const AVAILABLE_TOPICS = [
   { id: "tech", label: "Technology", description: "General tech news and updates" },
@@ -29,11 +30,27 @@ const FEED_FREQUENCIES = [
   { id: "daily", label: "Daily", description: "Once per day summary" },
 ]
 
+const PLATFORMS = [
+  { id: "twitter", label: "Twitter", icon: Twitter, color: "bg-blue-400" },
+  { id: "linkedin", label: "LinkedIn", icon: Linkedin, color: "bg-blue-600" },
+  { id: "facebook", label: "Facebook", icon: Facebook, color: "bg-blue-700" },
+]
+
 interface Preferences {
   topics: string[]
   feedFrequency: string
   autoPostEnabled: boolean
   emailNotifications: boolean
+  selectedPlatforms: string[]
+  postsPerPlatform: number
+}
+
+interface SocialAccount {
+  id: string
+  platform: string
+  accountName: string
+  isActive: boolean
+  createdAt: Date
 }
 
 export default function SettingsPage() {
@@ -45,11 +62,17 @@ export default function SettingsPage() {
     feedFrequency: "daily",
     autoPostEnabled: false,
     emailNotifications: true,
+    selectedPlatforms: [],
+    postsPerPlatform: 6,
   })
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([])
+  const [showAddAccount, setShowAddAccount] = useState(false)
+  const [newAccount, setNewAccount] = useState({ platform: "twitter", accountName: "" })
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   useEffect(() => {
     fetchPreferences()
+    fetchSocialAccounts()
   }, [])
 
   const fetchPreferences = async () => {
@@ -63,6 +86,18 @@ export default function SettingsPage() {
       console.error("Error fetching preferences:", error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchSocialAccounts = async () => {
+    try {
+      const response = await fetch("/api/social-accounts")
+      if (response.ok) {
+        const data = await response.json()
+        setSocialAccounts(data)
+      }
+    } catch (error) {
+      console.error("Error fetching social accounts:", error)
     }
   }
 
@@ -99,6 +134,64 @@ export default function SettingsPage() {
     }))
   }
 
+  const togglePlatform = (platformId: string) => {
+    setPreferences((prev) => ({
+      ...prev,
+      selectedPlatforms: prev.selectedPlatforms.includes(platformId)
+        ? prev.selectedPlatforms.filter((p) => p !== platformId)
+        : [...prev.selectedPlatforms, platformId],
+    }))
+  }
+
+  const addSocialAccount = async () => {
+    if (!newAccount.accountName) {
+      setMessage({ type: "error", text: "Account name is required" })
+      return
+    }
+
+    try {
+      const response = await fetch("/api/social-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newAccount),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to add account")
+      }
+
+      await fetchSocialAccounts()
+      setShowAddAccount(false)
+      setNewAccount({ platform: "twitter", accountName: "" })
+      setMessage({ type: "success", text: "Social account connected!" })
+    } catch (error: any) {
+      setMessage({ type: "error", text: error.message })
+    }
+  }
+
+  const deleteSocialAccount = async (id: string) => {
+    if (!confirm("Are you sure you want to disconnect this account?")) return
+
+    try {
+      const response = await fetch(`/api/social-accounts?id=${id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to delete account")
+      }
+
+      await fetchSocialAccounts()
+      setMessage({ type: "success", text: "Account disconnected" })
+    } catch (error: any) {
+      setMessage({ type: "error", text: error.message })
+    }
+  }
+
+  const getPlatformInfo = (platformId: string) => {
+    return PLATFORMS.find((p) => p.id === platformId)!
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -118,7 +211,7 @@ export default function SettingsPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Settings</h1>
           <p className="text-gray-600">
-            Manage your preferences and account settings
+            Manage your preferences and social accounts
           </p>
         </div>
 
@@ -141,12 +234,177 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          {/* Social Accounts */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Connected Social Accounts</CardTitle>
+                  <CardDescription>
+                    Connect your social media accounts for auto-posting
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAddAccount(!showAddAccount)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Account
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {showAddAccount && (
+                <div className="border rounded-lg p-4 bg-gray-50">
+                  <h4 className="font-semibold mb-3">Connect New Account</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <Label>Platform</Label>
+                      <select
+                        className="w-full mt-1 p-2 border rounded-md"
+                        value={newAccount.platform}
+                        onChange={(e) =>
+                          setNewAccount({ ...newAccount, platform: e.target.value })
+                        }
+                      >
+                        {PLATFORMS.map((platform) => (
+                          <option key={platform.id} value={platform.id}>
+                            {platform.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Account Name/Username</Label>
+                      <Input
+                        placeholder="@username"
+                        value={newAccount.accountName}
+                        onChange={(e) =>
+                          setNewAccount({ ...newAccount, accountName: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="flex space-x-2">
+                      <Button onClick={addSocialAccount} className="flex-1">
+                        Connect
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowAddAccount(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {socialAccounts.length === 0 ? (
+                <p className="text-sm text-gray-600">
+                  No social accounts connected yet. Add one to enable auto-posting.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {socialAccounts.map((account) => {
+                    const platform = getPlatformInfo(account.platform)
+                    const Icon = platform.icon
+                    return (
+                      <div
+                        key={account.id}
+                        className="flex items-center justify-between p-3 border rounded-lg"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`p-2 rounded-lg ${platform.color} text-white`}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{account.accountName}</p>
+                            <p className="text-xs text-gray-500">{platform.label}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {account.isActive && (
+                            <Badge variant="outline" className="text-green-600">
+                              <Check className="h-3 w-3 mr-1" />
+                              Active
+                            </Badge>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteSocialAccount(account.id)}
+                            className="text-red-600"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Auto-Posting Platforms */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Auto-Posting Platforms</CardTitle>
+              <CardDescription>
+                Select platforms where you want to auto-post content (6 posts per platform)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {PLATFORMS.map((platform) => {
+                  const Icon = platform.icon
+                  const isConnected = socialAccounts.some(
+                    (acc) => acc.platform === platform.id && acc.isActive
+                  )
+                  const isSelected = preferences.selectedPlatforms.includes(platform.id)
+
+                  return (
+                    <div
+                      key={platform.id}
+                      className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                        isSelected
+                          ? "border-blue-600 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      } ${!isConnected ? "opacity-50" : ""}`}
+                      onClick={() => isConnected && togglePlatform(platform.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`p-2 rounded-lg ${platform.color} text-white`}>
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-semibold">{platform.label}</h4>
+                            <p className="text-xs text-gray-600">
+                              {isConnected
+                                ? "Account connected - Click to enable auto-posting"
+                                : "Connect account first to enable"}
+                            </p>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <Badge variant="default">Auto-posting enabled</Badge>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Topic Preferences */}
           <Card>
             <CardHeader>
               <CardTitle>Topic Preferences</CardTitle>
               <CardDescription>
-                Select topics you're interested in for content curation
+                Select topics for content curation and auto-posting
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -190,7 +448,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Feed Frequency</CardTitle>
               <CardDescription>
-                How often do you want to receive content updates?
+                How often to fetch content from your feeds
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -225,9 +483,9 @@ export default function SettingsPage() {
           {/* Notifications */}
           <Card>
             <CardHeader>
-              <CardTitle>Notifications</CardTitle>
+              <CardTitle>Notifications & Automation</CardTitle>
               <CardDescription>
-                Manage your notification preferences
+                Manage your notification and automation preferences
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -235,7 +493,7 @@ export default function SettingsPage() {
                 <div className="space-y-0.5">
                   <Label>Auto-posting</Label>
                   <p className="text-sm text-gray-600">
-                    Automatically post generated drafts to social media
+                    Automatically post 6 unique pieces of content per platform based on your topics
                   </p>
                 </div>
                 <Switch
@@ -250,7 +508,7 @@ export default function SettingsPage() {
                 <div className="space-y-0.5">
                   <Label>Email notifications</Label>
                   <p className="text-sm text-gray-600">
-                    Receive email updates about new content
+                    Receive email updates about posted content
                   </p>
                 </div>
                 <Switch

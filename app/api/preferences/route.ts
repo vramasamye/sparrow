@@ -9,6 +9,8 @@ const preferencesSchema = z.object({
   feedFrequency: z.enum(["realtime", "hourly", "daily"]),
   autoPostEnabled: z.boolean(),
   emailNotifications: z.boolean(),
+  selectedPlatforms: z.array(z.string()).optional(),
+  postsPerPlatform: z.number().optional(),
 })
 
 export async function GET() {
@@ -31,6 +33,8 @@ export async function GET() {
           feedFrequency: "daily",
           autoPostEnabled: false,
           emailNotifications: true,
+          selectedPlatforms: [],
+          postsPerPlatform: 6,
         },
       })
     }
