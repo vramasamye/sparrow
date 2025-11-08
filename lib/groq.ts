@@ -1,4 +1,5 @@
 import Groq from 'groq-sdk'
+import { withRateLimit } from './services/rate-limiter'
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -38,17 +39,25 @@ Respond in JSON format:
   "engagementScore": number
 }`
 
-    const completion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      model: 'mixtral-8x7b-32768',
-      temperature: 0.5,
-      max_tokens: 1024,
-      response_format: { type: 'json_object' },
+    // Use rate limiting for GROQ API
+    const completion = await withRateLimit('groq', async () => {
+      return await groq.chat.completions.create({
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        model: 'mixtral-8x7b-32768',
+        temperature: 0.5,
+        max_tokens: 1024,
+        response_format: { type: 'json_object' },
+      })
+    }, {
+      retries: 2,
+      onRetry: (attempt, error) => {
+        console.log(`[GROQ] Retrying content analysis (attempt ${attempt + 1}):`, error.message)
+      }
     })
 
     const result = JSON.parse(completion.choices[0]?.message?.content || '{}')
@@ -94,16 +103,24 @@ Requirements:
 
 Return only the post text, no additional formatting or explanation.`
 
-    const completion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      model: 'mixtral-8x7b-32768',
-      temperature: 0.7,
-      max_tokens: 512,
+    // Use rate limiting for GROQ API
+    const completion = await withRateLimit('groq', async () => {
+      return await groq.chat.completions.create({
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        model: 'mixtral-8x7b-32768',
+        temperature: 0.7,
+        max_tokens: 512,
+      })
+    }, {
+      retries: 2,
+      onRetry: (attempt, error) => {
+        console.log(`[GROQ] Retrying draft generation (attempt ${attempt + 1}):`, error.message)
+      }
     })
 
     return completion.choices[0]?.message?.content || ''

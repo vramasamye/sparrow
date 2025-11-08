@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db'
 import { generateDraft } from '@/lib/groq'
+import { batchWithRateLimit } from './rate-limiter'
+import type { ServiceName } from '@/lib/config/rate-limits'
 
 interface AutoPostResult {
   userId: string
@@ -136,10 +138,14 @@ export async function autoPostForUser(
       return result
     }
 
-    // Generate and post drafts for each content item
-    for (const content of contentItems) {
-      try {
-        // Generate draft using GROQ
+    // Use batch processing with rate limiting for social media posts
+    const platformService = platform as ServiceName
+
+    const results = await batchWithRateLimit(
+      platformService,
+      contentItems,
+      async (content) => {
+        // Generate draft using GROQ (already rate-limited)
         const draftBody = await generateDraft(
           content.optimizedTitle || content.title,
           content.summary || content.description || '',
@@ -160,7 +166,7 @@ export async function autoPostForUser(
           },
         })
 
-        // Simulate posting (in real implementation, call actual social media APIs)
+        // Post to social media (with rate limiting)
         const postUrl = await publishToSocialMedia(socialAccount, draftBody, platform)
 
         // Track posted content
@@ -183,11 +189,22 @@ export async function autoPostForUser(
           },
         })
 
+        return { draftId: draft.id, postUrl }
+      },
+      {
+        onProgress: (completed, total) => {
+          console.log(`[AutoPost] ${platform}: ${completed}/${total} posts completed for user ${userId}`)
+        }
+      }
+    )
+
+    // Collect results
+    for (const postResult of results) {
+      if (postResult.success) {
         result.postsCreated++
-      } catch (error: any) {
+      } else {
         result.postsFailed++
-        result.errors.push(`Failed to post content ${content.id}: ${error.message}`)
-        console.error(`Error posting content ${content.id}:`, error)
+        result.errors.push(postResult.error?.message || 'Unknown error')
       }
     }
   } catch (error: any) {

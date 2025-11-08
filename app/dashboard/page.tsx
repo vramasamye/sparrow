@@ -2,6 +2,7 @@ import { Suspense } from "react"
 import { ContentFeed } from "@/components/dashboard/content-feed"
 import { DashboardNav } from "@/components/dashboard/dashboard-nav"
 import { StatsCards } from "@/components/dashboard/stats-cards"
+import { RateLimitMonitor } from "@/components/dashboard/rate-limit-monitor"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function DashboardPage() {
@@ -72,6 +73,8 @@ export default function DashboardPage() {
                 </p>
               </CardContent>
             </Card>
+
+            <RateLimitMonitor />
           </div>
         </div>
       </main>
