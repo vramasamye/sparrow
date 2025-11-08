@@ -280,3 +280,27 @@ export async function runAutoPostingForAllUsers(): Promise<AutoPostResult[]> {
 
   return results
 }
+
+/**
+ * Auto-post for all users and return summary statistics
+ * Optimized for daily cron job execution
+ */
+export async function autoPostForAllUsers(): Promise<{
+  usersProcessed: number
+  totalPostsCreated: number
+  totalPostsFailed: number
+  errors: string[]
+}> {
+  const results = await runAutoPostingForAllUsers()
+
+  const summary = {
+    usersProcessed: new Set(results.map(r => r.userId)).size,
+    totalPostsCreated: results.reduce((sum, r) => sum + r.postsCreated, 0),
+    totalPostsFailed: results.reduce((sum, r) => sum + r.postsFailed, 0),
+    errors: results.flatMap(r => r.errors),
+  }
+
+  console.log(`[AutoPost Summary] Processed ${summary.usersProcessed} users, created ${summary.totalPostsCreated} posts`)
+
+  return summary
+}

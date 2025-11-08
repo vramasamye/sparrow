@@ -144,7 +144,17 @@ export async function processContent(contentId: string): Promise<void> {
   }
 }
 
-export async function ingestAllFeeds(): Promise<void> {
+export async function ingestAllFeeds(): Promise<{
+  feedsProcessed: number
+  contentAdded: number
+  errors: string[]
+}> {
+  const result = {
+    feedsProcessed: 0,
+    contentAdded: 0,
+    errors: [] as string[],
+  }
+
   try {
     const feeds = await prisma.feed.findMany({
       where: { isActive: true },
@@ -153,15 +163,26 @@ export async function ingestAllFeeds(): Promise<void> {
     console.log(`Starting ingestion of ${feeds.length} feeds...`)
 
     for (const feed of feeds) {
-      await ingestFeed(feed.id)
-      // Small delay to avoid overwhelming sources
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      try {
+        const newItems = await ingestFeed(feed.id)
+        result.feedsProcessed++
+        result.contentAdded += newItems
+        // Small delay to avoid overwhelming sources
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      } catch (error) {
+        const errorMsg = `Failed to ingest ${feed.name}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        result.errors.push(errorMsg)
+        console.error(errorMsg)
+      }
     }
 
-    console.log('Feed ingestion completed')
+    console.log(`Feed ingestion completed: ${result.contentAdded} new items from ${result.feedsProcessed} feeds`)
   } catch (error) {
     console.error('Error in ingestAllFeeds:', error)
+    result.errors.push(error instanceof Error ? error.message : 'Unknown error')
   }
+
+  return result
 }
 
 export async function processUnprocessedContent(limit: number = 10): Promise<void> {

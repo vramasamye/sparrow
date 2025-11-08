@@ -1,330 +1,362 @@
-# Deployment Guide - Sparrow Platform
+# Sparrow Deployment Guide
 
-This guide will help you deploy the Sparrow content curation platform to production.
+## Vercel Free Tier Deployment
+
+This guide will help you deploy Sparrow to Vercel's **free (Hobby) tier** with all features optimized for the free tier limitations.
+
+### What's Optimized for Free Tier
+
+✅ **Single daily cron job** (Vercel free tier allows 1 cron per day)
+✅ **Combined RSS ingestion, AI processing, and auto-posting** in one daily task
+✅ **Rate limiting** configured to respect all API free tiers
+✅ **PostgreSQL** compatible with free database services (Neon, Supabase)
+✅ **GROQ API** free tier (30 req/min, 14,400/day)
+
+---
 
 ## Prerequisites
 
-- PostgreSQL database (Supabase, Neon, or any PostgreSQL provider)
-- GROQ API key (free at https://console.groq.com)
-- Vercel account (for deployment)
+1. **Vercel Account** - Sign up at [vercel.com](https://vercel.com)
+2. **GROQ API Key** - Get free key at [console.groq.com](https://console.groq.com)
+3. **PostgreSQL Database** - Choose one:
+   - [Neon](https://neon.tech) - Recommended, generous free tier
+   - [Supabase](https://supabase.com) - Free tier with 500MB
+   - [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres) - Free tier
 
-## Environment Setup
+---
 
-### 1. Set Up Database
+## Quick Deployment (Recommended)
 
-**Option A: Supabase (Recommended)**
-1. Create a new project at https://supabase.com
-2. Go to Settings > Database and copy the connection string
-3. Replace the password placeholder with your actual password
-
-**Option B: Neon**
-1. Create a new project at https://neon.tech
-2. Copy the connection string from the dashboard
-
-**Option C: Local PostgreSQL**
-```bash
-# Install PostgreSQL locally
-# macOS
-brew install postgresql@15
-
-# Ubuntu/Debian
-sudo apt-get install postgresql
-
-# Create database
-createdb sparrow
-```
-
-### 2. Configure Environment Variables
-
-Create a `.env.local` file in the root directory:
+### 1. Install Vercel CLI
 
 ```bash
-# Database
-DATABASE_URL="postgresql://user:password@host:5432/sparrow"
-
-# GROQ API (Get from https://console.groq.com)
-GROQ_API_KEY="gsk_xxxxxxxxxxxxx"
-
-# NextAuth (Generate: openssl rand -base64 32)
-NEXTAUTH_URL="https://your-domain.vercel.app"
-NEXTAUTH_SECRET="your-generated-secret"
-
-# Cron Secret (Generate: openssl rand -base64 32)
-CRON_SECRET="your-cron-secret"
-```
-
-### 3. Initialize Database
-
-```bash
-# Install dependencies if not already done
-npm install
-
-# Generate Prisma Client
-PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 npm run db:generate
-
-# Push schema to database
-npm run db:push
-
-# Seed initial RSS feeds
-npm run seed
-```
-
-## Deployment to Vercel
-
-### 1. Push to GitHub
-
-```bash
-git add .
-git commit -m "Initial deployment"
-git push origin main
+npm i -g vercel
 ```
 
 ### 2. Deploy to Vercel
 
-1. Go to https://vercel.com/new
-2. Import your GitHub repository
-3. Configure environment variables:
-   - `DATABASE_URL`
-   - `GROQ_API_KEY`
-   - `NEXTAUTH_URL` (will be your Vercel URL)
-   - `NEXTAUTH_SECRET`
-   - `CRON_SECRET`
+```bash
+# Login to Vercel
+vercel login
 
-4. Deploy!
+# Deploy the project
+vercel
+```
 
-### 3. Configure Cron Jobs
+Follow the prompts:
+- **Set up and deploy?** → Yes
+- **Which scope?** → Select your account
+- **Link to existing project?** → No
+- **Project name?** → sparrow (or your preference)
+- **Directory?** → `./`
 
-Vercel will automatically set up the cron job from `vercel.json`:
-- **Path**: `/api/cron/ingest`
-- **Schedule**: Every hour (`0 * * * *`)
+### 3. Set Up Environment Variables
 
-This will:
-1. Fetch content from all active RSS feeds
-2. Process new content with GROQ AI
-3. Generate quality scores and optimized titles
+After deployment, add these environment variables via the [Vercel Dashboard](https://vercel.com/dashboard):
 
-### 4. Test the Cron Job
+Go to: **Your Project → Settings → Environment Variables**
+
+Add the following for **Production**, **Preview**, and **Development**:
 
 ```bash
-# Test locally
-curl -X GET http://localhost:3000/api/cron/ingest \
-  -H "Authorization: Bearer YOUR_CRON_SECRET"
+# Database (get this from your PostgreSQL provider)
+DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
 
-# Test on Vercel
-curl -X GET https://your-app.vercel.app/api/cron/ingest \
-  -H "Authorization: Bearer YOUR_CRON_SECRET"
+# GROQ API (from https://console.groq.com)
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
+
+# NextAuth (your production URL)
+NEXTAUTH_URL=https://your-project.vercel.app
+
+# NextAuth Secret (generate with: openssl rand -base64 32)
+NEXTAUTH_SECRET=your-generated-secret-here
+
+# Cron Secret (generate with: openssl rand -base64 32)
+CRON_SECRET=your-cron-secret-here
 ```
 
-## Alternative Deployment Options
+### 4. Set Up Database
 
-### Deploy to Netlify
+**Option A: Using Neon (Recommended)**
 
-1. Install Netlify CLI: `npm install -g netlify-cli`
-2. Run: `netlify deploy`
-3. Set environment variables in Netlify dashboard
-4. Use external cron service for `/api/cron/ingest`
+1. Sign up at [neon.tech](https://neon.tech)
+2. Create a new project
+3. Copy the connection string (should include `?sslmode=require`)
+4. Add it to Vercel environment variables as `DATABASE_URL`
 
-### Deploy to Railway
+**Option B: Using Supabase**
 
-1. Create account at https://railway.app
-2. Create new project from GitHub
-3. Add PostgreSQL service
-4. Set environment variables
-5. Deploy
+1. Sign up at [supabase.com](https://supabase.com)
+2. Create a new project
+3. Go to **Settings → Database** and copy the connection string
+4. Add it to Vercel environment variables as `DATABASE_URL`
 
-### Docker Deployment
-
-```dockerfile
-# Dockerfile (create this file)
-FROM node:18-alpine
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci
-
-COPY . .
-RUN npm run build
-
-ENV NODE_ENV=production
-EXPOSE 3000
-
-CMD ["npm", "start"]
-```
+### 5. Run Database Migrations
 
 ```bash
-# Build and run
-docker build -t sparrow .
-docker run -p 3000:3000 --env-file .env sparrow
+# Pull production environment variables locally
+vercel env pull .env.production
+
+# Set DATABASE_URL temporarily
+export DATABASE_URL="your-production-database-url"
+
+# Run migrations
+npx prisma migrate deploy
+
+# Seed the database with RSS feeds
+npx prisma db seed
 ```
 
-## Post-Deployment Tasks
-
-### 1. Add More RSS Feeds
+### 6. Redeploy with All Variables
 
 ```bash
-# Via API
-curl -X POST https://your-app.vercel.app/api/feeds \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Your Feed Name",
-    "url": "https://example.com/rss",
-    "category": "ai-ml",
-    "topics": ["ai", "ml"]
-  }'
+vercel --prod
 ```
 
-### 2. Monitor Cron Jobs
+---
 
-Check Vercel logs to ensure feeds are being ingested:
-```bash
-vercel logs --follow
-```
+## Verify Deployment
 
-### 3. Set Up Database Backups
-
-**Supabase**: Automatic daily backups included
-
-**Neon**: Configure backup retention in dashboard
-
-**Self-hosted**: Set up pg_dump cron:
-```bash
-# Add to crontab
-0 2 * * * pg_dump sparrow > /backups/sparrow_$(date +\%Y\%m\%d).sql
-```
-
-### 4. Configure Rate Limiting (Optional)
-
-For production, consider adding rate limiting:
+### Check Your App
 
 ```bash
-npm install @vercel/edge-rate-limit
+# Open your deployed app
+vercel open
 ```
 
-### 5. Add Monitoring
+### Test These URLs
 
-Consider integrating:
-- **Sentry** for error tracking
-- **LogRocket** for session replay
-- **PostHog** for analytics
+1. **Landing Page**: `https://your-project.vercel.app`
+2. **Sign Up**: `https://your-project.vercel.app/auth/signup`
+3. **Dashboard**: `https://your-project.vercel.app/dashboard`
 
-## Scaling Considerations
+### Verify Cron Job
 
-### Database Optimization
+1. Go to Vercel Dashboard → Your Project → **Cron**
+2. You should see: `/api/cron/daily-tasks` scheduled for `0 0 * * *` (daily at midnight UTC)
+3. You can manually trigger it for testing
 
-```sql
--- Add indexes for better performance
-CREATE INDEX idx_content_published ON content(published_at DESC);
-CREATE INDEX idx_content_quality ON content(quality_score DESC);
-CREATE INDEX idx_feed_active ON feeds(is_active, last_fetched);
-```
+---
 
-### Caching Strategy
+## How the Daily Cron Works
 
-Add Redis for caching (optional):
+The system runs **once per day at midnight UTC** and performs three tasks:
+
+### 1. RSS Feed Ingestion (Step 1)
+- Fetches all active RSS feeds
+- Deduplicates content
+- Stores new articles in database
+- Updates feed metadata
+
+### 2. AI Content Processing (Step 2)
+- Processes up to **50 articles per day** with GROQ AI
+- Analyzes quality, generates summaries
+- Optimizes titles for engagement
+- Scores content (quality + engagement)
+
+### 3. Auto-Posting (Step 3)
+- Finds users with auto-posting enabled
+- Selects 6 unique, high-quality posts per platform
+- Generates platform-specific content
+- Posts to social media (when integrated)
+- Tracks posted content to prevent duplicates
+
+**Total Runtime:** ~2-5 minutes depending on content volume
+
+---
+
+## Rate Limit Configuration
+
+The system respects all free tier limits:
+
+| Service   | Free Tier Limit      | Sparrow Config       | Daily Capacity |
+|-----------|---------------------|---------------------|----------------|
+| GROQ AI   | 30 req/min          | 25 req/min          | 14,400/day     |
+| Twitter   | 50 tweets/day       | 50 tweets/day       | 50/day         |
+| LinkedIn  | 100 posts/day       | 80 posts/day        | 80/day         |
+| Facebook  | 200 posts/hour      | 150 posts/hour      | 3,600/day      |
+| RSS Feeds | No official limit   | 100 feeds/hour      | Unlimited      |
+
+**Note:** Social media posting requires additional API keys (not needed for testing)
+
+---
+
+## Post-Deployment Setup
+
+### 1. Create Your First User
+
 ```bash
-npm install @vercel/kv
+# Visit your app
+https://your-project.vercel.app/auth/signup
+
+# Register with email and password
+# Login and access dashboard
 ```
 
-### Background Jobs
+### 2. Configure User Preferences
 
-For high-volume ingestion, consider:
-- **Upstash QStash** for reliable background jobs
-- **Inngest** for workflow orchestration
-- **BullMQ** with Redis for job queues
+1. Go to **Settings** in the dashboard
+2. Select your topics of interest (Technology, Business, Science, etc.)
+3. Choose platforms for auto-posting (optional, requires social accounts)
+4. Save preferences
+
+### 3. RSS Feeds
+
+The system comes pre-seeded with 15+ high-quality RSS feeds:
+- TechCrunch, The Verge, Wired (Technology)
+- Harvard Business Review, Forbes (Business)
+- ScienceDaily, NASA, National Geographic (Science)
+- The Atlantic, Medium (General)
+
+### 4. Monitor System
+
+- **Dashboard**: View content, drafts, analytics
+- **Rate Limit Monitor**: Check API usage in real-time (sidebar)
+- **Vercel Logs**: Monitor cron job execution
+
+---
 
 ## Troubleshooting
 
-### Prisma Issues
+### Issue: Database Connection Failed
 
+**Solution:**
+- Ensure `DATABASE_URL` includes `?sslmode=require`
+- Check database allows connections from `0.0.0.0/0` (all IPs)
+- Verify database is not in sleep mode (some free tiers pause)
+
+### Issue: Cron Job Not Running
+
+**Solution:**
+- Cron jobs on Vercel free tier run **daily only**
+- Check **Vercel Dashboard → Cron** for execution logs
+- Manually trigger via dashboard to test
+- Verify `CRON_SECRET` is set correctly
+
+### Issue: GROQ API Rate Limit Exceeded
+
+**Solution:**
+- Rate limiter is configured for 25 req/min (under 30/min limit)
+- Daily processing limited to 50 items
+- Check rate limit monitor in dashboard
+- Reduce `processUnprocessedContent(50)` to lower number if needed
+
+### Issue: Build Fails on Vercel
+
+**Solution:**
 ```bash
-# If Prisma client fails
-PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 npx prisma generate
-
-# Reset database (⚠️ deletes all data)
-npx prisma migrate reset
-
-# View database in browser
-npx prisma studio
-```
-
-### Build Errors
-
-```bash
-# Clear Next.js cache
-rm -rf .next
-
-# Rebuild
+# Test build locally first
 npm run build
+
+# Check for TypeScript errors
+npm run type-check
+
+# Ensure all dependencies are in package.json
+npm install
 ```
 
-### Database Connection Issues
+### Issue: NextAuth Errors
+
+**Solution:**
+- Verify `NEXTAUTH_URL` matches production URL exactly
+- Ensure `NEXTAUTH_SECRET` is at least 32 characters
+- No trailing slashes in `NEXTAUTH_URL`
+
+---
+
+## Useful Commands
 
 ```bash
-# Test connection
-npx prisma db push --skip-generate
+# View deployment logs
+vercel logs
 
-# Check connection string format
-# Should be: postgresql://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require
+# View real-time production logs
+vercel logs --follow
+
+# List all deployments
+vercel ls
+
+# Pull environment variables locally
+vercel env pull
+
+# Manually trigger cron (for testing)
+# Via Vercel Dashboard → Cron → Trigger
+
+# Check project details
+vercel inspect
 ```
 
-## Security Checklist
+---
 
-- [ ] Change all default secrets
-- [ ] Enable SSL for database connections
-- [ ] Set up proper CORS policies
-- [ ] Add rate limiting to API routes
-- [ ] Enable Vercel password protection (during beta)
-- [ ] Configure CSP headers
-- [ ] Review and limit API permissions
+## Upgrading to Pro Plan
 
-## Performance Optimization
+If you need more features, upgrade to Vercel Pro ($20/month):
 
-1. **Enable ISR** (Incremental Static Regeneration)
-2. **Add Redis caching** for frequently accessed data
-3. **Optimize images** with Next.js Image component
-4. **Bundle analysis**: `npm run build -- --analyze`
-5. **Database connection pooling** (use Prisma Accelerate)
+**Additional features:**
+- Multiple cron jobs (unlimited)
+- Faster edge functions
+- More bandwidth
+- Priority support
 
-## Cost Optimization
+To upgrade: Vercel Dashboard → Settings → Upgrade
 
-### Free Tier Limits
+However, **most users won't need Pro** - the free tier works great for personal projects and small teams!
 
-- **Vercel**: 100 GB bandwidth, 1000 serverless invocations
-- **Supabase**: 500 MB database, 2 GB bandwidth
-- **GROQ**: 15 requests/minute, 7000 requests/day
+---
 
-### Tips to Stay Free
+## Free Tier Limits Summary
 
-1. Use Vercel Edge caching
-2. Implement request batching for GROQ
-3. Set up proper cache headers
-4. Use static generation where possible
+**Vercel Hobby (Free) Plan:**
+- ✅ 100 GB bandwidth/month
+- ✅ 100 GB-hours serverless function execution
+- ✅ 1 cron job (daily) - **Already configured!**
+- ✅ Unlimited deployments
+- ✅ HTTPS + custom domains
 
-## Support & Maintenance
+**Recommended Database (Neon Free):**
+- ✅ 10 GB storage
+- ✅ Unlimited compute hours
+- ✅ 1 project
+- ✅ Automatic backups
 
-### Regular Tasks
+**GROQ API (Free):**
+- ✅ 30 requests/minute
+- ✅ 14,400 requests/day
+- ✅ Fast inference (Mixtral-8x7b)
 
-- **Weekly**: Review feed quality and remove low-performing sources
-- **Monthly**: Analyze GROQ usage and optimize prompts
-- **Quarterly**: Database maintenance and optimization
+---
 
-### Monitoring Endpoints
+## Cost Estimate
 
-```bash
-# Health check
-curl https://your-app.vercel.app/api/health
+**Total Monthly Cost: $0** 🎉
 
-# Stats
-curl https://your-app.vercel.app/api/stats
-```
+- Vercel Hobby: **Free**
+- Neon Database: **Free**
+- GROQ API: **Free**
+- Domain (optional): ~$12/year
+
+---
 
 ## Next Steps
 
-1. [ ] Set up authentication
-2. [ ] Add user preferences
-3. [ ] Implement draft scheduling
-4. [ ] Connect social media accounts
-5. [ ] Build analytics dashboard
+1. ✅ Deploy to Vercel
+2. ✅ Set up database
+3. ✅ Configure environment variables
+4. ✅ Run migrations
+5. ✅ Create user account
+6. ✅ Configure preferences
+7. ⏰ Wait for midnight UTC for first cron run!
+8. 📊 Check dashboard next morning
 
-For issues and questions, refer to the main [README.md](./README.md) or open an issue on GitHub.
+---
+
+## Support
+
+- **Vercel Docs**: https://vercel.com/docs
+- **GROQ Docs**: https://console.groq.com/docs
+- **Prisma Docs**: https://www.prisma.io/docs
+- **Next.js Docs**: https://nextjs.org/docs
+
+---
+
+**Happy deploying! 🚀**
