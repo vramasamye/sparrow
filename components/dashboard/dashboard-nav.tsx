@@ -2,8 +2,17 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Sparkles, LayoutDashboard, Rss, FileText, Settings, User } from "lucide-react"
+import { useSession, signOut } from "next-auth/react"
+import { Sparkles, LayoutDashboard, Rss, FileText, Settings, User, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
 const navItems = [
@@ -15,6 +24,7 @@ const navItems = [
 
 export function DashboardNav() {
   const pathname = usePathname()
+  const { data: session } = useSession()
 
   return (
     <nav className="border-b bg-white">
@@ -49,10 +59,32 @@ export function DashboardNav() {
           </div>
 
           <div className="flex items-center space-x-4">
-            <Button variant="outline" size="sm">
-              <User className="h-4 w-4 mr-2" />
-              Profile
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <User className="h-4 w-4 mr-2" />
+                  {session?.user?.name || "User"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/settings">
+                    <Settings className="h-4 w-4 mr-2" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => signOut({ callbackUrl: "/" })}
+                  className="text-red-600"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
